@@ -50,9 +50,9 @@ def add_kconfig(tests):
             parent = infer_parent_feature(t)
             f.write(f"""
 config {cfg}
-    tristate "KUnit test for {t}"
-    depends on KUNIT && {parent}
-    default KUNIT_ALL_TESTS
+    bool "KUnit test for {t}"
+    depends on KUNIT
+    default n
     help
       Enables KUnit test for {t}.
 """)
