@@ -2,10 +2,10 @@ import os
 from pathlib import Path
 
 # --- CONFIGURE THESE PATHS ---
-GENERATED_TEST_DIR = Path("main_test_dir/generated_tests")
-MAKEFILE_PATH = Path("linux/drivers/pinctrl/Makefile")
-KCONFIG_PATH = Path("linux/drivers/pinctrl/Kconfig")
-CONFIG_FILE_PATH = Path("linux/my_pinctrl.config")  # ← NEW target file
+GENERATED_TEST_DIR = Path("/home/amd/nithin/KunitGen/main_test_dir/generated_tests")
+MAKEFILE_PATH = Path("/home/amd/linux/drivers/pinctrl/Makefile")
+KCONFIG_PATH = Path("/home/amd/linux/drivers/pinctrl/Kconfig")
+CONFIG_FILE_PATH = Path("/home/amd/linux/my_pinctrl.config")  # ← NEW target file
 
 def get_generated_test_files():
     """Returns a list of test filenames without extension (e.g., pinctrl_amd_kunit1)."""
