@@ -4,7 +4,7 @@ from pathlib import Path
 GENERATED_TEST_DIR = Path("/home/amd/KunitGen/main_test_dir/generated_tests")
 MAKEFILE_PATH = Path("/home/amd/linux/drivers/pinctrl/Makefile")
 KCONFIG_PATH = Path("/home/amd/linux/drivers/pinctrl/Kconfig")
-CONFIG_FILE_PATH = Path("/home/amd/linux/my_pinctrl.config")
+CONFIG_FILE_PATH = Path("/home/amd/linux/drivers/pinctrl/my_pinctrl.config")
 
 def get_generated_test_files():
     return [f.stem for f in GENERATED_TEST_DIR.glob("*.c")]
