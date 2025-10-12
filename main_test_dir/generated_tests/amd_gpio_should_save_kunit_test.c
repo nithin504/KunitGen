@@ -1,15 +1,19 @@
-```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/pinctrl/pinctrl.h>
+#include <linux/pinctrl/pinconf.h>
 #include <linux/gpio/driver.h>
 #include <linux/irq.h>
-#include <linux/irqdomain.h>
+#include <linux/io.h>
+#include <linux/spinlock.h>
 
-// Mock structures
+// Mock structures and functions
 struct amd_gpio {
 	struct gpio_chip gc;
 	struct pinctrl_dev *pctrl;
+	void __iomem *base;
+	raw_spinlock_t lock;
+	struct platform_device *pdev;
 };
 
 struct pin_desc {
@@ -17,7 +21,19 @@ struct pin_desc {
 	struct gpio_chip *gpio_owner;
 };
 
-// Function under test
+static struct pin_desc *pin_desc_get(struct pinctrl_dev *pctldev, unsigned int pin)
+{
+	// This will be replaced by our mocks
+	return NULL;
+}
+
+static bool gpiochip_line_is_irq(struct gpio_chip *gc, unsigned int offset)
+{
+	// This will be replaced by our mocks
+	return false;
+}
+
+// Include the function under test
 static bool amd_gpio_should_save(struct amd_gpio *gpio_dev, unsigned int pin)
 {
 	const struct pin_desc *pd = pin_desc_get(gpio_dev->pctrl, pin);
@@ -36,107 +52,137 @@ static bool amd_gpio_should_save(struct amd_gpio *gpio_dev, unsigned int pin)
 	return false;
 }
 
-// Mock implementations
-static struct pin_desc mock_pd;
-static bool gpiochip_line_is_irq_return_value;
+// Mock data
+static struct amd_gpio mock_gpio_dev;
+static struct pin_desc mock_pin_desc;
 
-const struct pin_desc *pin_desc_get(struct pinctrl_dev *pctldev, unsigned int pin)
+// Mock implementations
+static struct pin_desc *(*orig_pin_desc_get)(struct pinctrl_dev *, unsigned int);
+static bool (*orig_gpiochip_line_is_irq)(struct gpio_chip *, unsigned int);
+
+static struct pin_desc *mock_pin_desc_get(struct pinctrl_dev *pctldev, unsigned int pin)
 {
-	if (pin == 0xFFFFFFFF)
-		return NULL;
-	return &mock_pd;
+	if (pin == 0)
+		return &mock_pin_desc;
+	else if (pin == 1)
+		return NULL; // Simulate pin_desc_get returning NULL
+	return NULL;
 }
 
-bool gpiochip_line_is_irq(struct gpio_chip *gc, unsigned int offset)
+static bool mock_gpiochip_line_is_irq_true(struct gpio_chip *gc, unsigned int offset)
 {
-	return gpiochip_line_is_irq_return_value;
+	return true;
+}
+
+static bool mock_gpiochip_line_is_irq_false(struct gpio_chip *gc, unsigned int offset)
+{
+	return false;
 }
 
 // Test cases
-static void test_amd_gpio_should_save_null_pin_desc(struct kunit *test)
+static void test_amd_gpio_should_save_null_pd(struct kunit *test)
 {
-	struct amd_gpio gpio_dev = {0};
 	bool result;
 
-	result = amd_gpio_should_save(&gpio_dev, 0xFFFFFFFF);
+	// Setup: Make pin_desc_get return NULL
+	orig_pin_desc_get = pin_desc_get;
+	*(void **)&pin_desc_get = (void *)mock_pin_desc_get;
+
+	result = amd_gpio_should_save(&mock_gpio_dev, 1);
 	KUNIT_EXPECT_FALSE(test, result);
 }
 
-static void test_amd_gpio_should_save_no_owners_no_irq(struct kunit *test)
+static void test_amd_gpio_should_save_no_owner_no_irq(struct kunit *test)
 {
-	struct amd_gpio gpio_dev = {0};
 	bool result;
 
-	mock_pd.mux_owner = NULL;
-	mock_pd.gpio_owner = NULL;
-	gpiochip_line_is_irq_return_value = false;
+	// Setup
+	orig_pin_desc_get = pin_desc_get;
+	*(void **)&pin_desc_get = (void *)mock_pin_desc_get;
+	orig_gpiochip_line_is_irq = gpiochip_line_is_irq;
+	*(void **)&gpiochip_line_is_irq = (void *)mock_gpiochip_line_is_irq_false;
 
-	result = amd_gpio_should_save(&gpio_dev, 0);
+	mock_pin_desc.mux_owner = NULL;
+	mock_pin_desc.gpio_owner = NULL;
+
+	result = amd_gpio_should_save(&mock_gpio_dev, 0);
 	KUNIT_EXPECT_FALSE(test, result);
 }
 
 static void test_amd_gpio_should_save_mux_owner_set(struct kunit *test)
 {
-	struct amd_gpio gpio_dev = {0};
 	bool result;
-	struct device_node dummy_node;
 
-	mock_pd.mux_owner = &dummy_node;
-	mock_pd.gpio_owner = NULL;
-	gpiochip_line_is_irq_return_value = false;
+	// Setup
+	orig_pin_desc_get = pin_desc_get;
+	*(void **)&pin_desc_get = (void *)mock_pin_desc_get;
+	orig_gpiochip_line_is_irq = gpiochip_line_is_irq;
+	*(void **)&gpiochip_line_is_irq = (void *)mock_gpiochip_line_is_irq_false;
 
-	result = amd_gpio_should_save(&gpio_dev, 0);
+	mock_pin_desc.mux_owner = (struct device_node *)0x1; // Non-NULL
+	mock_pin_desc.gpio_owner = NULL;
+
+	result = amd_gpio_should_save(&mock_gpio_dev, 0);
 	KUNIT_EXPECT_TRUE(test, result);
 }
 
 static void test_amd_gpio_should_save_gpio_owner_set(struct kunit *test)
 {
-	struct amd_gpio gpio_dev = {0};
 	bool result;
-	struct gpio_chip dummy_gc;
 
-	mock_pd.mux_owner = NULL;
-	mock_pd.gpio_owner = &dummy_gc;
-	gpiochip_line_is_irq_return_value = false;
+	// Setup
+	orig_pin_desc_get = pin_desc_get;
+	*(void **)&pin_desc_get = (void *)mock_pin_desc_get;
+	orig_gpiochip_line_is_irq = gpiochip_line_is_irq;
+	*(void **)&gpiochip_line_is_irq = (void *)mock_gpiochip_line_is_irq_false;
 
-	result = amd_gpio_should_save(&gpio_dev, 0);
+	mock_pin_desc.mux_owner = NULL;
+	mock_pin_desc.gpio_owner = (struct gpio_chip *)0x1; // Non-NULL
+
+	result = amd_gpio_should_save(&mock_gpio_dev, 0);
 	KUNIT_EXPECT_TRUE(test, result);
 }
 
-static void test_amd_gpio_should_save_irq_line_true(struct kunit *test)
+static void test_amd_gpio_should_save_line_is_irq_true(struct kunit *test)
 {
-	struct amd_gpio gpio_dev = {0};
 	bool result;
 
-	mock_pd.mux_owner = NULL;
-	mock_pd.gpio_owner = NULL;
-	gpiochip_line_is_irq_return_value = true;
+	// Setup
+	orig_pin_desc_get = pin_desc_get;
+	*(void **)&pin_desc_get = (void *)mock_pin_desc_get;
+	orig_gpiochip_line_is_irq = gpiochip_line_is_irq;
+	*(void **)&gpiochip_line_is_irq = (void *)mock_gpiochip_line_is_irq_true;
 
-	result = amd_gpio_should_save(&gpio_dev, 0);
+	mock_pin_desc.mux_owner = NULL;
+	mock_pin_desc.gpio_owner = NULL;
+
+	result = amd_gpio_should_save(&mock_gpio_dev, 0);
 	KUNIT_EXPECT_TRUE(test, result);
 }
 
 static void test_amd_gpio_should_save_all_conditions_true(struct kunit *test)
 {
-	struct amd_gpio gpio_dev = {0};
 	bool result;
-	struct device_node dummy_node;
-	struct gpio_chip dummy_gc;
 
-	mock_pd.mux_owner = &dummy_node;
-	mock_pd.gpio_owner = &dummy_gc;
-	gpiochip_line_is_irq_return_value = true;
+	// Setup
+	orig_pin_desc_get = pin_desc_get;
+	*(void **)&pin_desc_get = (void *)mock_pin_desc_get;
+	orig_gpiochip_line_is_irq = gpiochip_line_is_irq;
+	*(void **)&gpiochip_line_is_irq = (void *)mock_gpiochip_line_is_irq_true;
 
-	result = amd_gpio_should_save(&gpio_dev, 0);
+	mock_pin_desc.mux_owner = (struct device_node *)0x1;
+	mock_pin_desc.gpio_owner = (struct gpio_chip *)0x1;
+
+	result = amd_gpio_should_save(&mock_gpio_dev, 0);
 	KUNIT_EXPECT_TRUE(test, result);
 }
 
 static struct kunit_case amd_gpio_should_save_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_should_save_null_pin_desc),
-	KUNIT_CASE(test_amd_gpio_should_save_no_owners_no_irq),
+	KUNIT_CASE(test_amd_gpio_should_save_null_pd),
+	KUNIT_CASE(test_amd_gpio_should_save_no_owner_no_irq),
 	KUNIT_CASE(test_amd_gpio_should_save_mux_owner_set),
 	KUNIT_CASE(test_amd_gpio_should_save_gpio_owner_set),
-	KUNIT_CASE(test_amd_gpio_should_save_irq_line_true),
+	KUNIT_CASE(test_amd_gpio_should_save_line_is_irq_true),
 	KUNIT_CASE(test_amd_gpio_should_save_all_conditions_true),
 	{}
 };
@@ -147,4 +193,3 @@ static struct kunit_suite amd_gpio_should_save_test_suite = {
 };
 
 kunit_test_suite(amd_gpio_should_save_test_suite);
-```

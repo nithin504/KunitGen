@@ -1,4 +1,3 @@
-```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/io.h>
@@ -35,7 +34,7 @@ static void test_amd_gpio_check_wake_returns_false_when_handler_returns_false(st
 	mock_do_amd_gpio_irq_handler_call_count = 0;
 	mock_do_amd_gpio_irq_handler_last_dev_id = NULL;
 
-	void *test_dev_id = (void *)0xCAFEBABE;
+	void *test_dev_id = (void *)0xCAFEFACE;
 	bool result = amd_gpio_check_wake(test_dev_id);
 
 	KUNIT_EXPECT_FALSE(test, result);
@@ -43,7 +42,7 @@ static void test_amd_gpio_check_wake_returns_false_when_handler_returns_false(st
 	KUNIT_EXPECT_PTR_EQ(test, mock_do_amd_gpio_irq_handler_last_dev_id, test_dev_id);
 }
 
-static void test_amd_gpio_check_wake_with_null_dev_id(struct kunit *test)
+static void test_amd_gpio_check_wake_passes_null_dev_id_correctly(struct kunit *test)
 {
 	mock_do_amd_gpio_irq_handler_return = true;
 	mock_do_amd_gpio_irq_handler_call_count = 0;
@@ -56,17 +55,16 @@ static void test_amd_gpio_check_wake_with_null_dev_id(struct kunit *test)
 	KUNIT_EXPECT_NULL(test, mock_do_amd_gpio_irq_handler_last_dev_id);
 }
 
-static struct kunit_case generated_test_cases[] = {
+static struct kunit_case amd_gpio_check_wake_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_check_wake_returns_true_when_handler_returns_true),
 	KUNIT_CASE(test_amd_gpio_check_wake_returns_false_when_handler_returns_false),
-	KUNIT_CASE(test_amd_gpio_check_wake_with_null_dev_id),
+	KUNIT_CASE(test_amd_gpio_check_wake_passes_null_dev_id_correctly),
 	{}
 };
 
-static struct kunit_suite generated_test_suite = {
+static struct kunit_suite amd_gpio_check_wake_test_suite = {
 	.name = "amd_gpio_check_wake_test",
-	.test_cases = generated_test_cases,
+	.test_cases = amd_gpio_check_wake_test_cases,
 };
 
-kunit_test_suite(generated_test_suite);
-```
+kunit_test_suite(amd_gpio_check_wake_test_suite);

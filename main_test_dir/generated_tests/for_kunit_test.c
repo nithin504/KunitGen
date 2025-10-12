@@ -1,4 +1,4 @@
-```c
+// SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/string.h>
 #include <linux/pinctrl/pinctrl.h>
@@ -13,8 +13,8 @@ struct pinctrl_device {
 
 struct group_info {
 	const char *name;
-	unsigned int npins;
 	unsigned int *pins;
+	unsigned int npins;
 };
 
 struct gpio_device {
@@ -28,7 +28,7 @@ static struct pin_desc *pin_desc_get(struct pinctrl_device *pctrl, unsigned int 
 	return &pctrl->pin_descs[pin];
 }
 
-static void assign_mux_owner_for_imx_f_groups(struct gpio_device *gpio_dev, unsigned int group)
+static void process_imx_groups(struct gpio_device *gpio_dev, unsigned int group)
 {
 	unsigned int ind;
 	struct pin_desc *pd;
@@ -42,140 +42,135 @@ static void assign_mux_owner_for_imx_f_groups(struct gpio_device *gpio_dev, unsi
 	}
 }
 
-static char test_pin_memory[4096];
-static struct pin_desc test_pin_descs[256];
-static struct pinctrl_device test_pctrl;
-static struct group_info test_groups[10];
-static struct gpio_device test_gpio_dev;
-static unsigned int test_pins[256];
-
-static void test_assign_mux_owner_match_group(struct kunit *test)
+static void test_process_imx_groups_match_prefix(struct kunit *test)
 {
-	memset(test_pin_descs, 0, sizeof(test_pin_descs));
-	memset(test_groups, 0, sizeof(test_groups));
-	memset(test_pins, 0, sizeof(test_pins));
+	struct pinctrl_device pctrl_dev = {0};
+	struct group_info groups[1];
+	struct gpio_device gpio_dev = {0};
+	struct pin_desc pin_descs[2];
+	unsigned int pins[] = {0, 1};
+	char buffer[64];
 
-	test_pctrl.pin_descs = test_pin_descs;
-	test_gpio_dev.pctrl = &test_pctrl;
-	test_gpio_dev.groups = test_groups;
-	test_gpio_dev.ngroups = 1;
+	pctrl_dev.pin_descs = pin_descs;
+	gpio_dev.pctrl = &pctrl_dev;
+	gpio_dev.groups = groups;
+	gpio_dev.ngroups = 1;
 
-	test_groups[0].name = "IMX_FOO";
-	test_groups[0].npins = 2;
-	test_groups[0].pins = test_pins;
-	test_pins[0] = 10;
-	test_pins[1] = 11;
+	groups[0].name = "IMX_FOO";
+	groups[0].pins = pins;
+	groups[0].npins = 2;
 
-	assign_mux_owner_for_imx_f_groups(&test_gpio_dev, 0);
+	pin_descs[0].mux_owner = NULL;
+	pin_descs[1].mux_owner = NULL;
 
-	KUNIT_EXPECT_PTR_EQ(test, (void *)test_pin_descs[10].mux_owner, (void *)test_groups[0].name);
-	KUNIT_EXPECT_PTR_EQ(test, (void *)test_pin_descs[11].mux_owner, (void *)test_groups[0].name);
+	process_imx_groups(&gpio_dev, 0);
+
+	KUNIT_EXPECT_PTR_EQ(test, (void *)pin_descs[0].mux_owner, (void *)groups[0].name);
+	KUNIT_EXPECT_PTR_EQ(test, (void *)pin_descs[1].mux_owner, (void *)groups[0].name);
 }
 
-static void test_assign_mux_owner_non_match_group(struct kunit *test)
+static void test_process_imx_groups_no_match_prefix(struct kunit *test)
 {
-	memset(test_pin_descs, 0, sizeof(test_pin_descs));
-	memset(test_groups, 0, sizeof(test_groups));
-	memset(test_pins, 0, sizeof(test_pins));
+	struct pinctrl_device pctrl_dev = {0};
+	struct group_info groups[1];
+	struct gpio_device gpio_dev = {0};
+	struct pin_desc pin_descs[2];
+	unsigned int pins[] = {0, 1};
 
-	test_pctrl.pin_descs = test_pin_descs;
-	test_gpio_dev.pctrl = &test_pctrl;
-	test_gpio_dev.groups = test_groups;
-	test_gpio_dev.ngroups = 1;
+	pctrl_dev.pin_descs = pin_descs;
+	gpio_dev.pctrl = &pctrl_dev;
+	gpio_dev.groups = groups;
+	gpio_dev.ngroups = 1;
 
-	test_groups[0].name = "NOT_IMX_F";
-	test_groups[0].npins = 2;
-	test_groups[0].pins = test_pins;
-	test_pins[0] = 20;
-	test_pins[1] = 21;
+	groups[0].name = "IMX_GOO";
+	groups[0].pins = pins;
+	groups[0].npins = 2;
 
-	assign_mux_owner_for_imx_f_groups(&test_gpio_dev, 0);
+	pin_descs[0].mux_owner = NULL;
+	pin_descs[1].mux_owner = NULL;
 
-	KUNIT_EXPECT_NULL(test, test_pin_descs[20].mux_owner);
-	KUNIT_EXPECT_NULL(test, test_pin_descs[21].mux_owner);
+	process_imx_groups(&gpio_dev, 0);
+
+	KUNIT_EXPECT_PTR_EQ(test, (void *)pin_descs[0].mux_owner, (void *)NULL);
+	KUNIT_EXPECT_PTR_EQ(test, (void *)pin_descs[1].mux_owner, (void *)NULL);
 }
 
-static void test_assign_mux_owner_partial_match_group(struct kunit *test)
+static void test_process_imx_groups_partial_match_prefix(struct kunit *test)
 {
-	memset(test_pin_descs, 0, sizeof(test_pin_descs));
-	memset(test_groups, 0, sizeof(test_groups));
-	memset(test_pins, 0, sizeof(test_pins));
+	struct pinctrl_device pctrl_dev = {0};
+	struct group_info groups[1];
+	struct gpio_device gpio_dev = {0};
+	struct pin_desc pin_descs[2];
+	unsigned int pins[] = {0, 1};
 
-	test_pctrl.pin_descs = test_pin_descs;
-	test_gpio_dev.pctrl = &test_pctrl;
-	test_gpio_dev.groups = test_groups;
-	test_gpio_dev.ngroups = 2;
+	pctrl_dev.pin_descs = pin_descs;
+	gpio_dev.pctrl = &pctrl_dev;
+	gpio_dev.groups = groups;
+	gpio_dev.ngroups = 1;
 
-	test_groups[0].name = "IMX_FOO";
-	test_groups[0].npins = 1;
-	test_groups[0].pins = test_pins;
-	test_pins[0] = 30;
+	groups[0].name = "IMX_F";
+	groups[0].pins = pins;
+	groups[0].npins = 2;
 
-	test_groups[1].name = "NOT_MATCHING";
-	test_groups[1].npins = 1;
-	test_groups[1].pins = &test_pins[1];
-	test_pins[1] = 31;
+	pin_descs[0].mux_owner = NULL;
+	pin_descs[1].mux_owner = NULL;
 
-	assign_mux_owner_for_imx_f_groups(&test_gpio_dev, 0);
-	assign_mux_owner_for_imx_f_groups(&test_gpio_dev, 1);
+	process_imx_groups(&gpio_dev, 0);
 
-	KUNIT_EXPECT_PTR_EQ(test, (void *)test_pin_descs[30].mux_owner, (void *)test_groups[0].name);
-	KUNIT_EXPECT_NULL(test, test_pin_descs[31].mux_owner);
+	KUNIT_EXPECT_PTR_EQ(test, (void *)pin_descs[0].mux_owner, (void *)groups[0].name);
+	KUNIT_EXPECT_PTR_EQ(test, (void *)pin_descs[1].mux_owner, (void *)groups[0].name);
 }
 
-static void test_assign_mux_owner_empty_group(struct kunit *test)
+static void test_process_imx_groups_empty_group(struct kunit *test)
 {
-	memset(test_pin_descs, 0, sizeof(test_pin_descs));
-	memset(test_groups, 0, sizeof(test_groups));
+	struct pinctrl_device pctrl_dev = {0};
+	struct group_info groups[1];
+	struct gpio_device gpio_dev = {0};
 
-	test_pctrl.pin_descs = test_pin_descs;
-	test_gpio_dev.pctrl = &test_pctrl;
-	test_gpio_dev.groups = test_groups;
-	test_gpio_dev.ngroups = 1;
+	pctrl_dev.pin_descs = NULL;
+	gpio_dev.pctrl = &pctrl_dev;
+	gpio_dev.groups = groups;
+	gpio_dev.ngroups = 1;
 
-	test_groups[0].name = "IMX_FOO";
-	test_groups[0].npins = 0;
-	test_groups[0].pins = NULL;
+	groups[0].name = "IMX_FOO";
+	groups[0].pins = NULL;
+	groups[0].npins = 0;
 
-	assign_mux_owner_for_imx_f_groups(&test_gpio_dev, 0);
-
+	process_imx_groups(&gpio_dev, 0);
 	KUNIT_EXPECT_EQ(test, 1, 1);
 }
 
-static void test_assign_mux_owner_null_group_name(struct kunit *test)
+static void test_process_imx_groups_null_pins(struct kunit *test)
 {
-	memset(test_pin_descs, 0, sizeof(test_pin_descs));
-	memset(test_groups, 0, sizeof(test_groups));
-	memset(test_pins, 0, sizeof(test_pins));
+	struct pinctrl_device pctrl_dev = {0};
+	struct group_info groups[1];
+	struct gpio_device gpio_dev = {0};
 
-	test_pctrl.pin_descs = test_pin_descs;
-	test_gpio_dev.pctrl = &test_pctrl;
-	test_gpio_dev.groups = test_groups;
-	test_gpio_dev.ngroups = 1;
+	pctrl_dev.pin_descs = NULL;
+	gpio_dev.pctrl = &pctrl_dev;
+	gpio_dev.groups = groups;
+	gpio_dev.ngroups = 1;
 
-	test_groups[0].name = NULL;
-	test_groups[0].npins = 1;
-	test_groups[0].pins = test_pins;
-	test_pins[0] = 40;
+	groups[0].name = "IMX_FOO";
+	groups[0].pins = NULL;
+	groups[0].npins = 1;
 
-	assign_mux_owner_for_imx_f_groups(&test_gpio_dev, 0);
-
-	KUNIT_EXPECT_NULL(test, test_pin_descs[40].mux_owner);
+	process_imx_groups(&gpio_dev, 0);
+	KUNIT_EXPECT_EQ(test, 1, 1);
 }
 
-static struct kunit_case generated_test_cases[] = {
-	KUNIT_CASE(test_assign_mux_owner_match_group),
-	KUNIT_CASE(test_assign_mux_owner_non_match_group),
-	KUNIT_CASE(test_assign_mux_owner_partial_match_group),
-	KUNIT_CASE(test_assign_mux_owner_empty_group),
-	KUNIT_CASE(test_assign_mux_owner_null_group_name),
+static struct kunit_case imx_group_test_cases[] = {
+	KUNIT_CASE(test_process_imx_groups_match_prefix),
+	KUNIT_CASE(test_process_imx_groups_no_match_prefix),
+	KUNIT_CASE(test_process_imx_groups_partial_match_prefix),
+	KUNIT_CASE(test_process_imx_groups_empty_group),
+	KUNIT_CASE(test_process_imx_groups_null_pins),
 	{}
 };
 
-static struct kunit_suite generated_test_suite = {
-	.name = "generated-kunit-test",
-	.test_cases = generated_test_cases,
+static struct kunit_suite imx_group_test_suite = {
+	.name = "imx_group_test",
+	.test_cases = imx_group_test_cases,
 };
 
-kunit_test_suite(generated_test_suite);
-```
+kunit_test_suite(imx_group_test_suite);

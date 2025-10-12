@@ -1,9 +1,8 @@
-```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
-#include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/gpio/driver.h>
+#include <linux/io.h>
 #include <linux/spinlock.h>
 
 #define INTERRUPT_ENABLE_OFF 16
@@ -32,41 +31,111 @@ static void amd_gpio_irq_disable(struct irq_data *d)
 	gpiochip_disable_irq(gc, hwirq);
 }
 
-static char mock_mmio_region[4096];
+static char mmio_buffer[4096];
 static struct amd_gpio mock_gpio_dev;
-static struct gpio_chip mock_gpio_chip;
+static struct gpio_chip mock_gc;
+static struct irq_data mock_irq_data;
 
-static void test_amd_gpio_irq_disable_normal(struct kunit *test)
+static void setup_mock_irq_data(struct kunit *test, irq_hw_number_t hwirq)
 {
-	struct irq_data d;
+	mock_irq_data.hwirq = hwirq;
+	mock_irq_data.chip_data = &mock_gc;
+}
+
+static void test_amd_gpio_irq_disable_normal_operation(struct kunit *test)
+{
+	const irq_hw_number_t hwirq = 5;
 	u32 initial_value = 0xFFFFFFFF;
 	u32 expected_value;
-	irq_hw_number_t hwirq = 5;
 
-	d.hwirq = hwirq;
-	d.chip_data = &mock_gpio_chip;
-
-	mock_gpio_dev.base = mock_mmio_region;
+	mock_gpio_dev.base = mmio_buffer;
 	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
-	mock_gpio_chip.private = &mock_gpio_dev;
+	mock_gc.private = &mock_gpio_dev;
+
+	setup_mock_irq_data(test, hwirq);
 
 	writel(initial_value, mock_gpio_dev.base + hwirq * 4);
 
-	amd_gpio_irq_disable(&d);
+	amd_gpio_irq_disable(&mock_irq_data);
 
 	expected_value = initial_value & ~BIT(INTERRUPT_ENABLE_OFF) & ~BIT(INTERRUPT_MASK_OFF);
-	KUNIT_EXPECT_EQ(test, readl(mock_gpio_dev.base + hwirq * 4), expected_value);
+	u32 result = readl(mock_gpio_dev.base + hwirq * 4);
+	KUNIT_EXPECT_EQ(test, result, expected_value);
 }
 
-static struct kunit_case generated_kunit_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_irq_disable_normal),
+static void test_amd_gpio_irq_disable_zero_hwirq(struct kunit *test)
+{
+	const irq_hw_number_t hwirq = 0;
+	u32 initial_value = 0x12345678;
+	u32 expected_value;
+
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	mock_gc.private = &mock_gpio_dev;
+
+	setup_mock_irq_data(test, hwirq);
+
+	writel(initial_value, mock_gpio_dev.base + hwirq * 4);
+
+	amd_gpio_irq_disable(&mock_irq_data);
+
+	expected_value = initial_value & ~BIT(INTERRUPT_ENABLE_OFF) & ~BIT(INTERRUPT_MASK_OFF);
+	u32 result = readl(mock_gpio_dev.base + hwirq * 4);
+	KUNIT_EXPECT_EQ(test, result, expected_value);
+}
+
+static void test_amd_gpio_irq_disable_clear_bits_only(struct kunit *test)
+{
+	const irq_hw_number_t hwirq = 10;
+	u32 initial_value = BIT(INTERRUPT_ENABLE_OFF) | BIT(INTERRUPT_MASK_OFF);
+	u32 expected_value = 0;
+
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	mock_gc.private = &mock_gpio_dev;
+
+	setup_mock_irq_data(test, hwirq);
+
+	writel(initial_value, mock_gpio_dev.base + hwirq * 4);
+
+	amd_gpio_irq_disable(&mock_irq_data);
+
+	u32 result = readl(mock_gpio_dev.base + hwirq * 4);
+	KUNIT_EXPECT_EQ(test, result, expected_value);
+}
+
+static void test_amd_gpio_irq_disable_other_bits_preserved(struct kunit *test)
+{
+	const irq_hw_number_t hwirq = 3;
+	u32 other_bits = 0x12340000;
+	u32 initial_value = other_bits | BIT(INTERRUPT_ENABLE_OFF) | BIT(INTERRUPT_MASK_OFF);
+	u32 expected_value = other_bits;
+
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	mock_gc.private = &mock_gpio_dev;
+
+	setup_mock_irq_data(test, hwirq);
+
+	writel(initial_value, mock_gpio_dev.base + hwirq * 4);
+
+	amd_gpio_irq_disable(&mock_irq_data);
+
+	u32 result = readl(mock_gpio_dev.base + hwirq * 4);
+	KUNIT_EXPECT_EQ(test, result, expected_value);
+}
+
+static struct kunit_case amd_gpio_irq_disable_test_cases[] = {
+	KUNIT_CASE(test_amd_gpio_irq_disable_normal_operation),
+	KUNIT_CASE(test_amd_gpio_irq_disable_zero_hwirq),
+	KUNIT_CASE(test_amd_gpio_irq_disable_clear_bits_only),
+	KUNIT_CASE(test_amd_gpio_irq_disable_other_bits_preserved),
 	{}
 };
 
-static struct kunit_suite generated_kunit_test_suite = {
-	.name = "generated-kunit-test",
-	.test_cases = generated_kunit_test_cases,
+static struct kunit_suite amd_gpio_irq_disable_test_suite = {
+	.name = "amd_gpio_irq_disable_test",
+	.test_cases = amd_gpio_irq_disable_test_cases,
 };
 
-kunit_test_suite(generated_kunit_test_suite);
-```
+kunit_test_suite(amd_gpio_irq_disable_test_suite);

@@ -1,113 +1,66 @@
-```c
+// SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/io.h>
+#include <linux/spinlock.h>
+#include <linux/errno.h>
 
-struct amd_gpio {
-	struct device *dev;
-	struct gpio_chip chip;
-	struct pinctrl_device pctldev;
-	const struct amd_gpio_group *groups;
-};
+// Mock pinctrl_dev_get_drvdata
+void *set_mock_pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev);
+#define pinctrl_dev_get_drvdata set_mock_pinctrl_dev_get_drvdata
 
-struct amd_gpio_group {
-	const unsigned *pins;
-	unsigned npins;
-};
-
-static int amd_get_group_pins(struct pinctrl_dev *pctldev,
-			      unsigned group,
-			      const unsigned **pins,
-			      unsigned *num_pins)
-{
-	struct amd_gpio *gpio_dev = pinctrl_dev_get_drvdata(pctldev);
-
-	*pins = gpio_dev->groups[group].pins;
-	*num_pins = gpio_dev->groups[group].npins;
-	return 0;
-}
+// Include the source code under test
+#include "pinctrl-amd.c"
 
 #define MAX_GROUPS 10
 #define MAX_PINS_PER_GROUP 32
 
 static struct amd_gpio mock_gpio_dev;
-static struct pinctrl_dev mock_pctldev;
+static struct pinctrl_dev dummy_pctldev;
 static unsigned mock_pins[MAX_GROUPS][MAX_PINS_PER_GROUP];
-static struct amd_gpio_group mock_groups[MAX_GROUPS];
+static struct pin_group mock_groups[MAX_GROUPS];
 
-static void *mock_pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
+void *set_mock_pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
 {
 	return &mock_gpio_dev;
 }
 
-#define pinctrl_dev_get_drvdata mock_pinctrl_dev_get_drvdata
-
-static void test_amd_get_group_pins_valid_group_zero_pins(struct kunit *test)
+static void test_amd_get_group_pins_valid_group(struct kunit *test)
 {
 	const unsigned *pins;
 	unsigned num_pins;
 	int ret;
 
-	mock_gpio_dev.groups = mock_groups;
-	mock_groups[0].pins = NULL;
-	mock_groups[0].npins = 0;
-
-	ret = amd_get_group_pins(&mock_pctldev, 0, &pins, &num_pins);
-
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_PTR_EQ(test, pins, (const unsigned *)NULL);
-	KUNIT_EXPECT_EQ(test, num_pins, 0U);
-}
-
-static void test_amd_get_group_pins_valid_group_with_pins(struct kunit *test)
-{
-	const unsigned *pins;
-	unsigned num_pins;
-	int ret;
-
+	// Setup mock data
 	mock_gpio_dev.groups = mock_groups;
 	mock_groups[0].pins = mock_pins[0];
 	mock_groups[0].npins = 5;
-	mock_pins[0][0] = 10;
-	mock_pins[0][1] = 11;
-	mock_pins[0][2] = 12;
-	mock_pins[0][3] = 13;
-	mock_pins[0][4] = 14;
+	for (int i = 0; i < 5; i++)
+		mock_pins[0][i] = 100 + i;
 
-	ret = amd_get_group_pins(&mock_pctldev, 0, &pins, &num_pins);
+	ret = amd_get_group_pins(&dummy_pctldev, 0, &pins, &num_pins);
 
 	KUNIT_EXPECT_EQ(test, ret, 0);
 	KUNIT_EXPECT_PTR_EQ(test, pins, mock_pins[0]);
 	KUNIT_EXPECT_EQ(test, num_pins, 5U);
 }
 
-static void test_amd_get_group_pins_multiple_groups(struct kunit *test)
+static void test_amd_get_group_pins_zero_pins(struct kunit *test)
 {
 	const unsigned *pins;
 	unsigned num_pins;
 	int ret;
 
+	// Setup mock data with zero pins
 	mock_gpio_dev.groups = mock_groups;
-	mock_groups[0].pins = mock_pins[0];
-	mock_groups[0].npins = 2;
-	mock_pins[0][0] = 100;
-	mock_pins[0][1] = 101;
-
 	mock_groups[1].pins = mock_pins[1];
-	mock_groups[1].npins = 3;
-	mock_pins[1][0] = 200;
-	mock_pins[1][1] = 201;
-	mock_pins[1][2] = 202;
+	mock_groups[1].npins = 0;
 
-	ret = amd_get_group_pins(&mock_pctldev, 0, &pins, &num_pins);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_PTR_EQ(test, pins, mock_pins[0]);
-	KUNIT_EXPECT_EQ(test, num_pins, 2U);
+	ret = amd_get_group_pins(&dummy_pctldev, 1, &pins, &num_pins);
 
-	ret = amd_get_group_pins(&mock_pctldev, 1, &pins, &num_pins);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 	KUNIT_EXPECT_PTR_EQ(test, pins, mock_pins[1]);
-	KUNIT_EXPECT_EQ(test, num_pins, 3U);
+	KUNIT_EXPECT_EQ(test, num_pins, 0U);
 }
 
 static void test_amd_get_group_pins_max_group_index(struct kunit *test)
@@ -116,23 +69,60 @@ static void test_amd_get_group_pins_max_group_index(struct kunit *test)
 	unsigned num_pins;
 	int ret;
 
+	// Setup mock data for maximum group index
 	mock_gpio_dev.groups = mock_groups;
 	mock_groups[MAX_GROUPS - 1].pins = mock_pins[MAX_GROUPS - 1];
-	mock_groups[MAX_GROUPS - 1].npins = 1;
-	mock_pins[MAX_GROUPS - 1][0] = 999;
+	mock_groups[MAX_GROUPS - 1].npins = 3;
+	for (int i = 0; i < 3; i++)
+		mock_pins[MAX_GROUPS - 1][i] = 200 + i;
 
-	ret = amd_get_group_pins(&mock_pctldev, MAX_GROUPS - 1, &pins, &num_pins);
+	ret = amd_get_group_pins(&dummy_pctldev, MAX_GROUPS - 1, &pins, &num_pins);
 
 	KUNIT_EXPECT_EQ(test, ret, 0);
 	KUNIT_EXPECT_PTR_EQ(test, pins, mock_pins[MAX_GROUPS - 1]);
-	KUNIT_EXPECT_EQ(test, num_pins, 1U);
+	KUNIT_EXPECT_EQ(test, num_pins, 3U);
+}
+
+static void test_amd_get_group_pins_null_pins_pointer(struct kunit *test)
+{
+	unsigned num_pins;
+	int ret;
+
+	// This should cause a kernel oops due to dereferencing NULL,
+	// but we can at least check that the function doesn't return an error
+	mock_gpio_dev.groups = mock_groups;
+	mock_groups[0].pins = mock_pins[0];
+	mock_groups[0].npins = 1;
+
+	ret = amd_get_group_pins(&dummy_pctldev, 0, NULL, &num_pins);
+
+	// The function itself doesn't validate the pins pointer
+	KUNIT_EXPECT_EQ(test, ret, 0);
+}
+
+static void test_amd_get_group_pins_null_num_pins_pointer(struct kunit *test)
+{
+	const unsigned *pins;
+	int ret;
+
+	// This should cause a kernel oops due to dereferencing NULL,
+	// but we can at least check that the function doesn't return an error
+	mock_gpio_dev.groups = mock_groups;
+	mock_groups[0].pins = mock_pins[0];
+	mock_groups[0].npins = 1;
+
+	ret = amd_get_group_pins(&dummy_pctldev, 0, &pins, NULL);
+
+	// The function itself doesn't validate the num_pins pointer
+	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static struct kunit_case amd_get_group_pins_test_cases[] = {
-	KUNIT_CASE(test_amd_get_group_pins_valid_group_zero_pins),
-	KUNIT_CASE(test_amd_get_group_pins_valid_group_with_pins),
-	KUNIT_CASE(test_amd_get_group_pins_multiple_groups),
+	KUNIT_CASE(test_amd_get_group_pins_valid_group),
+	KUNIT_CASE(test_amd_get_group_pins_zero_pins),
 	KUNIT_CASE(test_amd_get_group_pins_max_group_index),
+	KUNIT_CASE(test_amd_get_group_pins_null_pins_pointer),
+	KUNIT_CASE(test_amd_get_group_pins_null_num_pins_pointer),
 	{}
 };
 
@@ -142,4 +132,3 @@ static struct kunit_suite amd_get_group_pins_test_suite = {
 };
 
 kunit_test_suite(amd_get_group_pins_test_suite);
-```

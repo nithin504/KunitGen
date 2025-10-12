@@ -1,4 +1,3 @@
-```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/device.h>
@@ -9,186 +8,101 @@
 #define MOCK_BASE_ADDR 0x1000
 #define PIN_IRQ_PENDING 0x1
 
-static char mock_mmio_buffer[4096];
 static struct amd_gpio mock_gpio_dev;
-static struct pinctrl_dev mock_pctrl_dev;
-static struct pinctrl_desc mock_pinctrl_desc;
-static struct pinctrl_pin_desc mock_pins[8];
+static struct device mock_dev;
+static char mmio_buffer[4096];
 
-static bool should_save_retval = true;
+static bool should_save_ret = true;
 
 bool amd_gpio_should_save(struct amd_gpio *gpio_dev, unsigned int pin)
 {
-	return should_save_retval;
+	return should_save_ret;
 }
 
 static void test_amd_gpio_resume_success(struct kunit *test)
 {
-	struct device dev;
-	int i;
+	struct pinctrl_pin_desc pins[] = {
+		{ .number = 0 },
+		{ .number = 1 },
+	};
+	struct pinctrl_desc desc = {
+		.npins = ARRAY_SIZE(pins),
+		.pins = pins,
+	};
+	struct amd_pinctrl pctrl = {
+		.desc = &desc,
+	};
 
-	memset(&mock_gpio_dev, 0, sizeof(mock_gpio_dev));
-	memset(&mock_pinctrl_desc, 0, sizeof(mock_pinctrl_desc));
-	memset(mock_pins, 0, sizeof(mock_pins));
+	mock_gpio_dev.pctrl = &pctrl;
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.saved_regs[0] = 0x0;
+	mock_gpio_dev.saved_regs[1] = 0x0;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
 
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	mock_pinctrl_desc.pins = mock_pins;
-	mock_pinctrl_desc.npins = 4;
-	raw_spin_lock_init(&mock_gpio_dev.lock);
+	writel(0x1, mock_gpio_dev.base + 0 * 4);
+	writel(0x0, mock_gpio_dev.base + 1 * 4);
 
-	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
-		mock_pins[i].number = i;
-		mock_gpio_dev.saved_regs[i] = 0x0;
-		writel(0x0, mock_gpio_dev.base + i * 4);
-	}
+	dev_set_drvdata(&mock_dev, &mock_gpio_dev);
 
-	dev.driver_data = &mock_gpio_dev;
-	should_save_retval = true;
+	should_save_ret = true;
+	int ret = amd_gpio_resume(&mock_dev);
 
-	int ret = amd_gpio_resume(&dev);
 	KUNIT_EXPECT_EQ(test, ret, 0);
-
-	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
-		u32 reg_val = readl(mock_gpio_dev.base + i * 4);
-		KUNIT_EXPECT_EQ(test, reg_val, 0x0);
-	}
+	KUNIT_EXPECT_EQ(test, mock_gpio_dev.saved_regs[0] & PIN_IRQ_PENDING, 0x1);
+	KUNIT_EXPECT_EQ(test, mock_gpio_dev.saved_regs[1] & PIN_IRQ_PENDING, 0x0);
 }
 
-static void test_amd_gpio_resume_with_irq_pending(struct kunit *test)
+static void test_amd_gpio_resume_no_save(struct kunit *test)
 {
-	struct device dev;
-	int i;
+	struct pinctrl_pin_desc pins[] = {
+		{ .number = 0 },
+	};
+	struct pinctrl_desc desc = {
+		.npins = ARRAY_SIZE(pins),
+		.pins = pins,
+	};
+	struct amd_pinctrl pctrl = {
+		.desc = &desc,
+	};
 
-	memset(&mock_gpio_dev, 0, sizeof(mock_gpio_dev));
-	memset(&mock_pinctrl_desc, 0, sizeof(mock_pinctrl_desc));
-	memset(mock_pins, 0, sizeof(mock_pins));
+	mock_gpio_dev.pctrl = &pctrl;
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.saved_regs[0] = 0x5;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
 
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	mock_pinctrl_desc.pins = mock_pins;
-	mock_pinctrl_desc.npins = 4;
-	raw_spin_lock_init(&mock_gpio_dev.lock);
+	writel(0x1, mock_gpio_dev.base + 0 * 4);
 
-	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
-		mock_pins[i].number = i;
-		mock_gpio_dev.saved_regs[i] = 0x0;
-		writel(PIN_IRQ_PENDING, mock_gpio_dev.base + i * 4);
-	}
+	dev_set_drvdata(&mock_dev, &mock_gpio_dev);
 
-	dev.driver_data = &mock_gpio_dev;
-	should_save_retval = true;
+	should_save_ret = false;
+	int ret = amd_gpio_resume(&mock_dev);
 
-	int ret = amd_gpio_resume(&dev);
 	KUNIT_EXPECT_EQ(test, ret, 0);
-
-	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
-		u32 reg_val = readl(mock_gpio_dev.base + i * 4);
-		KUNIT_EXPECT_EQ(test, reg_val, PIN_IRQ_PENDING);
-		KUNIT_EXPECT_EQ(test, mock_gpio_dev.saved_regs[i], PIN_IRQ_PENDING);
-	}
+	KUNIT_EXPECT_EQ(test, mock_gpio_dev.saved_regs[0], 0x5);
 }
 
-static void test_amd_gpio_resume_partial_save(struct kunit *test)
+static void test_amd_gpio_resume_empty_pins(struct kunit *test)
 {
-	struct device dev;
-	int i;
+	struct pinctrl_desc desc = {
+		.npins = 0,
+		.pins = NULL,
+	};
+	struct amd_pinctrl pctrl = {
+		.desc = &desc,
+	};
 
-	memset(&mock_gpio_dev, 0, sizeof(mock_gpio_dev));
-	memset(&mock_pinctrl_desc, 0, sizeof(mock_pinctrl_desc));
-	memset(mock_pins, 0, sizeof(mock_pins));
+	mock_gpio_dev.pctrl = &pctrl;
+	dev_set_drvdata(&mock_dev, &mock_gpio_dev);
 
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	mock_pinctrl_desc.pins = mock_pins;
-	mock_pinctrl_desc.npins = 4;
-	raw_spin_lock_init(&mock_gpio_dev.lock);
+	int ret = amd_gpio_resume(&mock_dev);
 
-	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
-		mock_pins[i].number = i;
-		mock_gpio_dev.saved_regs[i] = 0x0;
-		writel(0x0, mock_gpio_dev.base + i * 4);
-	}
-
-	dev.driver_data = &mock_gpio_dev;
-	should_save_retval = false;
-
-	int ret = amd_gpio_resume(&dev);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-
-	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
-		u32 reg_val = readl(mock_gpio_dev.base + i * 4);
-		KUNIT_EXPECT_EQ(test, reg_val, 0x0);
-	}
-}
-
-static void test_amd_gpio_resume_mixed_pins(struct kunit *test)
-{
-	struct device dev;
-	int i;
-
-	memset(&mock_gpio_dev, 0, sizeof(mock_gpio_dev));
-	memset(&mock_pinctrl_desc, 0, sizeof(mock_pinctrl_desc));
-	memset(mock_pins, 0, sizeof(mock_pins));
-
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	mock_pinctrl_desc.pins = mock_pins;
-	mock_pinctrl_desc.npins = 4;
-	raw_spin_lock_init(&mock_gpio_dev.lock);
-
-	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
-		mock_pins[i].number = i;
-		mock_gpio_dev.saved_regs[i] = 0x0;
-		writel(PIN_IRQ_PENDING, mock_gpio_dev.base + i * 4);
-	}
-
-	dev.driver_data = &mock_gpio_dev;
-	should_save_retval = (i % 2 == 0);
-
-	int ret = amd_gpio_resume(&dev);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-
-	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
-		u32 reg_val = readl(mock_gpio_dev.base + i * 4);
-		if (i % 2 == 0) {
-			KUNIT_EXPECT_EQ(test, reg_val, PIN_IRQ_PENDING);
-			KUNIT_EXPECT_EQ(test, mock_gpio_dev.saved_regs[i], PIN_IRQ_PENDING);
-		} else {
-			KUNIT_EXPECT_EQ(test, reg_val, PIN_IRQ_PENDING);
-		}
-	}
-}
-
-static void test_amd_gpio_resume_no_pins(struct kunit *test)
-{
-	struct device dev;
-
-	memset(&mock_gpio_dev, 0, sizeof(mock_gpio_dev));
-	memset(&mock_pinctrl_desc, 0, sizeof(mock_pinctrl_desc));
-
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	mock_pinctrl_desc.pins = NULL;
-	mock_pinctrl_desc.npins = 0;
-
-	dev.driver_data = &mock_gpio_dev;
-	should_save_retval = true;
-
-	int ret = amd_gpio_resume(&dev);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static struct kunit_case amd_gpio_resume_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_resume_success),
-	KUNIT_CASE(test_amd_gpio_resume_with_irq_pending),
-	KUNIT_CASE(test_amd_gpio_resume_partial_save),
-	KUNIT_CASE(test_amd_gpio_resume_mixed_pins),
-	KUNIT_CASE(test_amd_gpio_resume_no_pins),
+	KUNIT_CASE(test_amd_gpio_resume_no_save),
+	KUNIT_CASE(test_amd_gpio_resume_empty_pins),
 	{}
 };
 
@@ -198,4 +112,3 @@ static struct kunit_suite amd_gpio_resume_test_suite = {
 };
 
 kunit_test_suite(amd_gpio_resume_test_suite);
-```

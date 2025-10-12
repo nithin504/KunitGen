@@ -23,7 +23,7 @@ def main():
 
     model_name = "qwen/qwen3-coder-480b-a35b-instruct"  # Free model on OpenRouter
     temperature = 0.2
-
+   
     # --- Step 1: Fetch source code from GitHub ---
     try:
         source_code = fetch_github_raw_file(github_raw_url)
@@ -38,8 +38,7 @@ def main():
         extractor.process_and_save(str(extracted_dir))
     except Exception as e:
         print(f"❌ Error during function extraction: {e}")
-        return
-
+        return 
     # --- Step 3: Generate KUnit tests ---
     try:
         generator = KUnitTestGenerator(

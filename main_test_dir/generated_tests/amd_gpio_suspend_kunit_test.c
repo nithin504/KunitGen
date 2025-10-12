@@ -1,34 +1,25 @@
-```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
-#include <linux/io.h>
-#include <linux/slab.h>
 
-// Mocking external dependencies
-static struct device mock_dev;
-static struct platform_device mock_pdev;
-static void *pinctrl_dev;
+// Mocking amd_gpio_suspend_hibernate_common to control its behavior during tests
+static bool mock_hibernate_common_called;
+static struct device *mock_hibernate_dev;
+static bool mock_hibernate_state;
+static int mock_hibernate_return_value;
 
-// Mock dev_get_drvdata to return our mock pinctrl_dev
-#define dev_get_drvdata(dev) ((dev == &mock_dev) ? pinctrl_dev : NULL)
-
-// Mock amd_gpio_suspend_hibernate_common to track calls and return value
-static int mock_amd_gpio_suspend_hibernate_common_called = 0;
-static int mock_amd_gpio_suspend_hibernate_common_return = 0;
-static bool mock_amd_gpio_suspend_hibernate_common_use_custom_ret = false;
-
-static int amd_gpio_suspend_hibernate_common(struct device *dev, bool is_suspend)
+int amd_gpio_suspend_hibernate_common(struct device *dev, bool is_suspend)
 {
-	mock_amd_gpio_suspend_hibernate_common_called++;
-	return mock_amd_gpio_suspend_hibernate_common_return;
+	mock_hibernate_common_called = true;
+	mock_hibernate_dev = dev;
+	mock_hibernate_state = is_suspend;
+	return mock_hibernate_return_value;
 }
 
-// Include the function under test
+// Include the source code under test
 #ifdef CONFIG_SUSPEND
-#else
-#undef CONFIG_SUSPEND
+static struct pinctrl_dev *pinctrl_dev;
 #endif
 
 static int amd_gpio_suspend(struct device *dev)
@@ -41,59 +32,63 @@ static int amd_gpio_suspend(struct device *dev)
 
 // --- Test Cases ---
 
-static void test_amd_gpio_suspend_with_config_suspend(struct kunit *test)
+static void test_amd_gpio_suspend_success(struct kunit *test)
 {
-#ifdef CONFIG_SUSPEND
-	void *expected_pdata = kunit_kzalloc(test, sizeof(int), GFP_KERNEL);
-	pinctrl_dev = expected_pdata;
-	mock_amd_gpio_suspend_hibernate_common_called = 0;
-	mock_amd_gpio_suspend_hibernate_common_return = 0;
+	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
+	struct device *dev = &pdev->dev;
+	mock_hibernate_return_value = 0;
+	mock_hibernate_common_called = false;
 
-	int ret = amd_gpio_suspend(&mock_dev);
+	int ret = amd_gpio_suspend(dev);
 
+	KUNIT_EXPECT_TRUE(test, mock_hibernate_common_called);
+	KUNIT_EXPECT_PTR_EQ(test, mock_hibernate_dev, dev);
+	KUNIT_EXPECT_TRUE(test, mock_hibernate_state);
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_suspend_hibernate_common_called, 1);
-	KUNIT_EXPECT_PTR_EQ(test, pinctrl_dev, expected_pdata);
-#else
-	KUNIT_SKIP(test, "CONFIG_SUSPEND not defined");
-#endif
-}
-
-static void test_amd_gpio_suspend_without_config_suspend(struct kunit *test)
-{
-#ifndef CONFIG_SUSPEND
-	pinctrl_dev = (void *)0xDEADBEEF; // Should remain untouched
-	mock_amd_gpio_suspend_hibernate_common_called = 0;
-	mock_amd_gpio_suspend_hibernate_common_return = 42;
-
-	int ret = amd_gpio_suspend(&mock_dev);
-
-	KUNIT_EXPECT_EQ(test, ret, 42);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_suspend_hibernate_common_called, 1);
-	KUNIT_EXPECT_PTR_NE(test, pinctrl_dev, (void *)0xDEADBEEF); // Not assigned due to ifndef
-#else
-	KUNIT_SKIP(test, "CONFIG_SUSPEND is defined");
-#endif
 }
 
 static void test_amd_gpio_suspend_error_path(struct kunit *test)
 {
-	mock_amd_gpio_suspend_hibernate_common_use_custom_ret = true;
-	mock_amd_gpio_suspend_hibernate_common_return = -EIO;
-	mock_amd_gpio_suspend_hibernate_common_called = 0;
+	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
+	struct device *dev = &pdev->dev;
+	mock_hibernate_return_value = -EIO;
+	mock_hibernate_common_called = false;
 
-	int ret = amd_gpio_suspend(&mock_dev);
+	int ret = amd_gpio_suspend(dev);
 
+	KUNIT_EXPECT_TRUE(test, mock_hibernate_common_called);
+	KUNIT_EXPECT_PTR_EQ(test, mock_hibernate_dev, dev);
+	KUNIT_EXPECT_TRUE(test, mock_hibernate_state);
 	KUNIT_EXPECT_EQ(test, ret, -EIO);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_suspend_hibernate_common_called, 1);
 }
 
-// --- Test Suite Definition ---
+#ifdef CONFIG_SUSPEND
+static void test_amd_gpio_suspend_pdata_assignment(struct kunit *test)
+{
+	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
+	struct device *dev = &pdev->dev;
+	struct pinctrl_dev dummy_pctldev;
+	dev_set_drvdata(dev, &dummy_pctldev);
+	mock_hibernate_return_value = 0;
+	mock_hibernate_common_called = false;
+	pinctrl_dev = NULL; // Reset global
+
+	int ret = amd_gpio_suspend(dev);
+
+	KUNIT_EXPECT_TRUE(test, mock_hibernate_common_called);
+	KUNIT_EXPECT_PTR_EQ(test, mock_hibernate_dev, dev);
+	KUNIT_EXPECT_TRUE(test, mock_hibernate_state);
+	KUNIT_EXPECT_PTR_EQ(test, pinctrl_dev, &dummy_pctldev);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+}
+#endif
 
 static struct kunit_case amd_gpio_suspend_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_suspend_with_config_suspend),
-	KUNIT_CASE(test_amd_gpio_suspend_without_config_suspend),
+	KUNIT_CASE(test_amd_gpio_suspend_success),
 	KUNIT_CASE(test_amd_gpio_suspend_error_path),
+#ifdef CONFIG_SUSPEND
+	KUNIT_CASE(test_amd_gpio_suspend_pdata_assignment),
+#endif
 	{}
 };
 
@@ -103,4 +98,3 @@ static struct kunit_suite amd_gpio_suspend_test_suite = {
 };
 
 kunit_test_suite(amd_gpio_suspend_test_suite);
-```

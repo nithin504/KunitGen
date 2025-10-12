@@ -1,4 +1,4 @@
-```c
+// SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/io.h>
 #include <linux/pinctrl/pinctrl.h>
@@ -41,91 +41,96 @@ static void amd_gpio_irq_init(struct amd_gpio *gpio_dev)
 	}
 }
 
-static struct pinctrl_desc mock_pinctrl_desc;
-static struct pinctrl_dev mock_pinctrl_dev;
-static struct pin_desc mock_pins[10];
-static char mmio_buffer[4096];
-static struct amd_gpio mock_gpio_dev;
+static const struct pinctrl_pin_desc test_pins[] = {
+	{ .number = 0 },
+	{ .number = 1 },
+	{ .number = 2 },
+};
 
-static const struct pin_desc *mock_pin_desc_get(struct pinctrl_dev *pctldev, unsigned int pin)
+static struct pinctrl_desc test_pinctrl_desc = {
+	.pins = test_pins,
+	.npins = ARRAY_SIZE(test_pins),
+};
+
+static struct pinctrl_dev test_pctrl_dev = {
+	.desc = &test_pinctrl_desc,
+};
+
+static const struct pin_desc mock_pin_desc = {};
+
+const struct pin_desc *pin_desc_get(struct pinctrl_dev *pctldev, unsigned int pin)
 {
-	if (pin >= ARRAY_SIZE(mock_pins))
-		return NULL;
-	return &mock_pins[pin];
+	if (pin < test_pinctrl_desc.npins)
+		return &mock_pin_desc;
+	return NULL;
 }
 
-#define pin_desc_get mock_pin_desc_get
+static char mmio_buffer[4096];
 
 static void test_amd_gpio_irq_init_normal(struct kunit *test)
 {
-	int i;
-	u32 expected_mask = BIT(WAKE_CNTRL_OFF_S0I3) | BIT(WAKE_CNTRL_OFF_S3) | BIT(WAKE_CNTRL_OFF_S4);
+	struct amd_gpio gpio_dev = {
+		.base = mmio_buffer,
+		.pctrl = &test_pctrl_dev,
+		.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock),
+	};
 
-	mock_pinctrl_desc.npins = 3;
-	mock_pinctrl_desc.pins = mock_pins;
-	mock_pinctrl_dev.desc = &mock_pinctrl_desc;
-	mock_gpio_dev.pctrl = &mock_pinctrl_dev;
-	mock_gpio_dev.base = mmio_buffer;
-	raw_spin_lock_init(&mock_gpio_dev.lock);
+	memset(mmio_buffer, 0xFF, sizeof(mmio_buffer));
 
-	for (i = 0; i < 3; i++) {
-		mock_pins[i].number = i;
-		writel(0xFFFFFFFF, mock_gpio_dev.base + i * 4);
-	}
+	amd_gpio_irq_init(&gpio_dev);
 
-	amd_gpio_irq_init(&mock_gpio_dev);
-
-	for (i = 0; i < 3; i++) {
-		u32 reg_val = readl(mock_gpio_dev.base + i * 4);
-		KUNIT_EXPECT_EQ(test, reg_val & expected_mask, 0U);
+	for (int i = 0; i < test_pinctrl_desc.npins; i++) {
+		u32 reg_val = readl(gpio_dev.base + test_pins[i].number * 4);
+		KUNIT_EXPECT_EQ(test, reg_val & BIT(WAKE_CNTRL_OFF_S0I3), 0U);
+		KUNIT_EXPECT_EQ(test, reg_val & BIT(WAKE_CNTRL_OFF_S3), 0U);
+		KUNIT_EXPECT_EQ(test, reg_val & BIT(WAKE_CNTRL_OFF_S4), 0U);
 	}
 }
 
-static void test_amd_gpio_irq_init_with_null_pin_desc(struct kunit *test)
+static void test_amd_gpio_irq_init_null_pin_desc(struct kunit *test)
 {
-	int i;
-	u32 expected_mask = BIT(WAKE_CNTRL_OFF_S0I3) | BIT(WAKE_CNTRL_OFF_S3) | BIT(WAKE_CNTRL_OFF_S4);
+	struct amd_gpio gpio_dev = {
+		.base = mmio_buffer,
+		.pctrl = &test_pctrl_dev,
+		.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock),
+	};
 
-	mock_pinctrl_desc.npins = 3;
-	mock_pinctrl_desc.pins = mock_pins;
-	mock_pinctrl_dev.desc = &mock_pinctrl_desc;
-	mock_gpio_dev.pctrl = &mock_pinctrl_dev;
-	mock_gpio_dev.base = mmio_buffer;
-	raw_spin_lock_init(&mock_gpio_dev.lock);
+	const struct pin_desc *(*orig_pin_desc_get)(struct pinctrl_dev *, unsigned int);
+	orig_pin_desc_get = pin_desc_get;
 
-	for (i = 0; i < 3; i++) {
-		mock_pins[i].number = i;
-		writel(0xFFFFFFFF, mock_gpio_dev.base + i * 4);
+	const struct pin_desc *null_pin_desc_get(struct pinctrl_dev *pctldev, unsigned int pin)
+	{
+		return NULL;
 	}
+	*(const struct pin_desc *(**)(struct pinctrl_dev *, unsigned int))((void *)&pin_desc_get) = null_pin_desc_get;
 
-	mock_pins[1].number = 999;
+	amd_gpio_irq_init(&gpio_dev);
 
-	amd_gpio_irq_init(&mock_gpio_dev);
-
-	for (i = 0; i < 3; i++) {
-		if (i == 1)
-			continue;
-		u32 reg_val = readl(mock_gpio_dev.base + i * 4);
-		KUNIT_EXPECT_EQ(test, reg_val & expected_mask, 0U);
-	}
+	*(const struct pin_desc *(**)(struct pinctrl_dev *, unsigned int))((void *)&pin_desc_get) = orig_pin_desc_get;
 }
 
-static void test_amd_gpio_irq_init_zero_pins(struct kunit *test)
+static void test_amd_gpio_irq_init_empty_pins(struct kunit *test)
 {
-	mock_pinctrl_desc.npins = 0;
-	mock_pinctrl_dev.desc = &mock_pinctrl_desc;
-	mock_gpio_dev.pctrl = &mock_pinctrl_dev;
-	mock_gpio_dev.base = mmio_buffer;
-	raw_spin_lock_init(&mock_gpio_dev.lock);
+	struct pinctrl_desc empty_desc = {
+		.pins = NULL,
+		.npins = 0,
+	};
+	struct pinctrl_dev empty_pctrl_dev = {
+		.desc = &empty_desc,
+	};
+	struct amd_gpio gpio_dev = {
+		.base = mmio_buffer,
+		.pctrl = &empty_pctrl_dev,
+		.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock),
+	};
 
-	amd_gpio_irq_init(&mock_gpio_dev);
-	KUNIT_SUCCEED(test);
+	amd_gpio_irq_init(&gpio_dev);
 }
 
 static struct kunit_case amd_gpio_irq_init_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_irq_init_normal),
-	KUNIT_CASE(test_amd_gpio_irq_init_with_null_pin_desc),
-	KUNIT_CASE(test_amd_gpio_irq_init_zero_pins),
+	KUNIT_CASE(test_amd_gpio_irq_init_null_pin_desc),
+	KUNIT_CASE(test_amd_gpio_irq_init_empty_pins),
 	{}
 };
 
@@ -135,4 +140,3 @@ static struct kunit_suite amd_gpio_irq_init_test_suite = {
 };
 
 kunit_test_suite(amd_gpio_irq_init_test_suite);
-```

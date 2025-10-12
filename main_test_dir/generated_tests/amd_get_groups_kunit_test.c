@@ -1,4 +1,3 @@
-```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/pinctrl/pinctrl.h>
@@ -6,36 +5,21 @@
 #include <linux/io.h>
 #include <linux/platform_device.h>
 
-// Mock includes and definitions
-#define MAX_FUNCTIONS 10
-
+// Mock structures and data
 struct amd_gpio {
 	void __iomem *iomux_base;
 	struct platform_device *pdev;
 };
 
-struct amd_pmx_function {
-	const char *name;
+struct amd_pmx_func {
 	const char * const *groups;
 	unsigned int ngroups;
 };
 
-static struct amd_pmx_function pmx_functions[MAX_FUNCTIONS];
+#define MAX_FUNCTIONS 10
+static struct amd_pmx_func pmx_functions[MAX_FUNCTIONS];
 
-// Mock pinctrl_dev_get_drvdata
-static void *mock_drvdata;
-
-static void *pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
-{
-	return mock_drvdata;
-}
-
-static struct device mock_dev;
-static struct platform_device mock_pdev;
-static struct amd_gpio mock_gpio_dev;
-static const char * const mock_group_list[] = {"group1", "group2"};
-static char test_mmio_region[4096];
-
+// Include the function under test
 static int amd_get_groups(struct pinctrl_dev *pctrldev, unsigned int selector,
 			  const char * const **groups,
 			  unsigned int * const num_groups)
@@ -52,73 +36,103 @@ static int amd_get_groups(struct pinctrl_dev *pctrldev, unsigned int selector,
 	return 0;
 }
 
-static void test_amd_get_groups_success(struct kunit *test)
+// Mock pinctrl_dev_get_drvdata
+static void *mock_drvdata;
+static void *pinctrl_dev_get_drvdata(struct pinctrl_dev *pctrldev)
 {
-	struct pinctrl_dev dummy_pctldev;
+	return mock_drvdata;
+}
+
+// Test cases
+static void test_amd_get_groups_iomux_base_null(struct kunit *test)
+{
+	struct pinctrl_dev pctldev;
+	struct amd_gpio gpio_dev = {
+		.iomux_base = NULL,
+		.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL)
+	};
 	const char * const *groups;
 	unsigned int num_groups;
-	int ret;
 
-	mock_drvdata = &mock_gpio_dev;
-	mock_gpio_dev.iomux_base = test_mmio_region;
-	mock_gpio_dev.pdev = &mock_pdev;
-	mock_pdev.dev = mock_dev;
+	mock_drvdata = &gpio_dev;
 
-	pmx_functions[0].groups = mock_group_list;
+	int ret = amd_get_groups(&pctldev, 0, &groups, &num_groups);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+}
+
+static void test_amd_get_groups_success(struct kunit *test)
+{
+	struct pinctrl_dev pctldev;
+	char test_mmio_region[4096];
+	struct amd_gpio gpio_dev = {
+		.iomux_base = test_mmio_region,
+		.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL)
+	};
+	const char *group_names[] = {"group1", "group2"};
+	const char * const *groups;
+	unsigned int num_groups = 0;
+
+	pmx_functions[0].groups = group_names;
 	pmx_functions[0].ngroups = 2;
 
-	ret = amd_get_groups(&dummy_pctldev, 0, &groups, &num_groups);
+	mock_drvdata = &gpio_dev;
 
+	int ret = amd_get_groups(&pctldev, 0, &groups, &num_groups);
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_PTR_EQ(test, groups, mock_group_list);
+	KUNIT_EXPECT_PTR_EQ(test, groups, group_names);
 	KUNIT_EXPECT_EQ(test, num_groups, 2U);
 }
 
-static void test_amd_get_groups_null_iomux_base(struct kunit *test)
+static void test_amd_get_groups_different_selector(struct kunit *test)
 {
-	struct pinctrl_dev dummy_pctldev;
-	const char * const *groups = NULL;
+	struct pinctrl_dev pctldev;
+	char test_mmio_region[4096];
+	struct amd_gpio gpio_dev = {
+		.iomux_base = test_mmio_region,
+		.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL)
+	};
+	const char *group_names[] = {"groupA"};
+	const char * const *groups;
 	unsigned int num_groups = 0;
-	int ret;
 
-	mock_drvdata = &mock_gpio_dev;
-	mock_gpio_dev.iomux_base = NULL;
-	mock_gpio_dev.pdev = &mock_pdev;
-	mock_pdev.dev = mock_dev;
+	pmx_functions[5].groups = group_names;
+	pmx_functions[5].ngroups = 1;
 
-	ret = amd_get_groups(&dummy_pctldev, 0, &groups, &num_groups);
+	mock_drvdata = &gpio_dev;
 
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-	KUNIT_EXPECT_PTR_EQ(test, groups, (const char * const *)NULL);
-	KUNIT_EXPECT_EQ(test, num_groups, 0U);
+	int ret = amd_get_groups(&pctldev, 5, &groups, &num_groups);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_PTR_EQ(test, groups, group_names);
+	KUNIT_EXPECT_EQ(test, num_groups, 1U);
 }
 
-static void test_amd_get_groups_selector_out_of_bounds(struct kunit *test)
+static void test_amd_get_groups_zero_groups(struct kunit *test)
 {
-	struct pinctrl_dev dummy_pctldev;
+	struct pinctrl_dev pctldev;
+	char test_mmio_region[4096];
+	struct amd_gpio gpio_dev = {
+		.iomux_base = test_mmio_region,
+		.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL)
+	};
 	const char * const *groups;
-	unsigned int num_groups;
-	int ret;
+	unsigned int num_groups = 99; // Initialize to non-zero to check if overwritten
 
-	mock_drvdata = &mock_gpio_dev;
-	mock_gpio_dev.iomux_base = test_mmio_region;
-	mock_gpio_dev.pdev = &mock_pdev;
-	mock_pdev.dev = mock_dev;
+	pmx_functions[1].groups = NULL;
+	pmx_functions[1].ngroups = 0;
 
-	// Accessing uninitialized pmx_functions entry beyond defined range
-	memset(&pmx_functions[MAX_FUNCTIONS - 1], 0, sizeof(struct amd_pmx_function));
+	mock_drvdata = &gpio_dev;
 
-	ret = amd_get_groups(&dummy_pctldev, MAX_FUNCTIONS - 1, &groups, &num_groups);
-
+	int ret = amd_get_groups(&pctldev, 1, &groups, &num_groups);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 	KUNIT_EXPECT_PTR_EQ(test, groups, (const char * const *)NULL);
 	KUNIT_EXPECT_EQ(test, num_groups, 0U);
 }
 
 static struct kunit_case amd_get_groups_test_cases[] = {
+	KUNIT_CASE(test_amd_get_groups_iomux_base_null),
 	KUNIT_CASE(test_amd_get_groups_success),
-	KUNIT_CASE(test_amd_get_groups_null_iomux_base),
-	KUNIT_CASE(test_amd_get_groups_selector_out_of_bounds),
+	KUNIT_CASE(test_amd_get_groups_different_selector),
+	KUNIT_CASE(test_amd_get_groups_zero_groups),
 	{}
 };
 
@@ -128,4 +142,3 @@ static struct kunit_suite amd_get_groups_test_suite = {
 };
 
 kunit_test_suite(amd_get_groups_test_suite);
-```

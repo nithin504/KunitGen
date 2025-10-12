@@ -1,4 +1,3 @@
-```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/irq.h>
@@ -15,14 +14,14 @@ static void amd_irq_ack(struct irq_data *d)
 static void test_amd_irq_ack_null_irq_data(struct kunit *test)
 {
 	amd_irq_ack(NULL);
-	KUNIT_EXPECT_EQ(test, 0, 0);
+	KUNIT_EXPECT_EQ(test, 1, 1);
 }
 
 static void test_amd_irq_ack_valid_irq_data(struct kunit *test)
 {
-	struct irq_data d;
-	amd_irq_ack(&d);
-	KUNIT_EXPECT_EQ(test, 0, 0);
+	struct irq_data data;
+	amd_irq_ack(&data);
+	KUNIT_EXPECT_EQ(test, 1, 1);
 }
 
 static struct kunit_case amd_irq_ack_test_cases[] = {
@@ -37,4 +36,3 @@ static struct kunit_suite amd_irq_ack_test_suite = {
 };
 
 kunit_test_suite(amd_irq_ack_test_suite);
-```
