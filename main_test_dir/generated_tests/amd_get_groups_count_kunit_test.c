@@ -1,20 +1,19 @@
+```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/pinctrl/pinctrl.h>
-#include <linux/pinctrl/pinconf.h>
 #include <linux/io.h>
-#include <linux/spinlock.h>
-#include <linux/errno.h>
 
-// Mock pinctrl_dev_get_drvdata
-static struct amd_gpio *mock_gpio_dev_ptr;
+struct amd_gpio {
+	int ngroups;
+};
 
-static void *mock_pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
+static struct amd_gpio mock_gpio_dev;
+
+static void *pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
 {
-	return mock_gpio_dev_ptr;
+	return &mock_gpio_dev;
 }
-
-#define pinctrl_dev_get_drvdata mock_pinctrl_dev_get_drvdata
 
 static int amd_get_groups_count(struct pinctrl_dev *pctldev)
 {
@@ -23,66 +22,37 @@ static int amd_get_groups_count(struct pinctrl_dev *pctldev)
 	return gpio_dev->ngroups;
 }
 
-static void test_amd_get_groups_count_normal(struct kunit *test)
+static void test_amd_get_groups_count_valid(struct kunit *test)
 {
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	
-	gpio_dev.ngroups = 5;
-	mock_gpio_dev_ptr = &gpio_dev;
-	
-	int result = amd_get_groups_count(&pctldev);
-	KUNIT_EXPECT_EQ(test, result, 5);
+	struct pinctrl_dev dummy_pctldev;
+	mock_gpio_dev.ngroups = 5;
+
+	int ret = amd_get_groups_count(&dummy_pctldev);
+	KUNIT_EXPECT_EQ(test, ret, 5);
 }
 
 static void test_amd_get_groups_count_zero(struct kunit *test)
 {
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	
-	gpio_dev.ngroups = 0;
-	mock_gpio_dev_ptr = &gpio_dev;
-	
-	int result = amd_get_groups_count(&pctldev);
-	KUNIT_EXPECT_EQ(test, result, 0);
+	struct pinctrl_dev dummy_pctldev;
+	mock_gpio_dev.ngroups = 0;
+
+	int ret = amd_get_groups_count(&dummy_pctldev);
+	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
-static void test_amd_get_groups_count_max_int(struct kunit *test)
+static void test_amd_get_groups_count_negative(struct kunit *test)
 {
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	
-	gpio_dev.ngroups = INT_MAX;
-	mock_gpio_dev_ptr = &gpio_dev;
-	
-	int result = amd_get_groups_count(&pctldev);
-	KUNIT_EXPECT_EQ(test, result, INT_MAX);
-}
+	struct pinctrl_dev dummy_pctldev;
+	mock_gpio_dev.ngroups = -3;
 
-static void test_amd_get_groups_count_min_int(struct kunit *test)
-{
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	
-	gpio_dev.ngroups = INT_MIN;
-	mock_gpio_dev_ptr = &gpio_dev;
-	
-	int result = amd_get_groups_count(&pctldev);
-	KUNIT_EXPECT_EQ(test, result, INT_MIN);
-}
-
-static void test_amd_get_groups_count_null_pctldev(struct kunit *test)
-{
-	int result = amd_get_groups_count(NULL);
-	KUNIT_EXPECT_EQ(test, result, 0);
+	int ret = amd_get_groups_count(&dummy_pctldev);
+	KUNIT_EXPECT_EQ(test, ret, -3);
 }
 
 static struct kunit_case amd_get_groups_count_test_cases[] = {
-	KUNIT_CASE(test_amd_get_groups_count_normal),
+	KUNIT_CASE(test_amd_get_groups_count_valid),
 	KUNIT_CASE(test_amd_get_groups_count_zero),
-	KUNIT_CASE(test_amd_get_groups_count_max_int),
-	KUNIT_CASE(test_amd_get_groups_count_min_int),
-	KUNIT_CASE(test_amd_get_groups_count_null_pctldev),
+	KUNIT_CASE(test_amd_get_groups_count_negative),
 	{}
 };
 
@@ -92,3 +62,4 @@ static struct kunit_suite amd_get_groups_count_test_suite = {
 };
 
 kunit_test_suite(amd_get_groups_count_test_suite);
+```

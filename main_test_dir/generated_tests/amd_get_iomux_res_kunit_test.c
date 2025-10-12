@@ -1,29 +1,27 @@
+```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/platform_device.h>
+#include <linux/ioport.h>
 #include <linux/property.h>
-#include <linux/err.h>
 #include <linux/io.h>
-
-static struct pinctrl_desc amd_pinctrl_desc;
 
 struct amd_gpio {
 	struct platform_device *pdev;
 	void __iomem *iomux_base;
 };
 
-static int device_property_match_string_mock(struct device *dev, const char *propname, const char *string)
-{
-	return -1;
-}
+struct pinctrl_desc {
+	const struct pinctrl_pin_desc *pins;
+	unsigned int npins;
+	const char *name;
+	const struct pinctrl_ops *pctlops;
+	const struct pinmux_ops *pmxops;
+	const struct pinconf_ops *confops;
+	struct module *owner;
+};
 
-static void __iomem *devm_platform_ioremap_resource_mock(struct platform_device *pdev, int index)
-{
-	return ERR_PTR(-ENXIO);
-}
-
-#define device_property_match_string device_property_match_string_mock
-#define devm_platform_ioremap_resource devm_platform_ioremap_resource_mock
+extern struct pinctrl_desc amd_pinctrl_desc;
 
 static void amd_get_iomux_res(struct amd_gpio *gpio_dev)
 {
@@ -31,7 +29,7 @@ static void amd_get_iomux_res(struct amd_gpio *gpio_dev)
 	struct device *dev = &gpio_dev->pdev->dev;
 	int index;
 
-	index = device_property_match_string(dev, "pinctrl-resource-names",  "iomux");
+	index = device_property_match_string(dev, "pinctrl-resource-names", "iomux");
 	if (index < 0) {
 		dev_dbg(dev, "iomux not supported\n");
 		goto out_no_pinmux;
@@ -49,84 +47,76 @@ out_no_pinmux:
 	desc->pmxops = NULL;
 }
 
-static void test_amd_get_iomux_res_device_property_fail(struct kunit *test)
+static const struct property_entry iomux_prop_present[] = {
+	PROPERTY_ENTRY_STRING_ARRAY("pinctrl-resource-names", "iomux"),
+	{}
+};
+
+static const struct property_entry iomux_prop_absent[] = {
+	PROPERTY_ENTRY_STRING_ARRAY("pinctrl-resource-names", "other"),
+	{}
+};
+
+static void test_amd_get_iomux_res_property_not_found(struct kunit *test)
 {
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
-	struct device dev;
-	
-	gpio_dev.pdev = &pdev;
-	pdev.dev = &dev;
-	amd_pinctrl_desc.pmxops = (void *)0x1234;
-	
+	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
+	struct amd_gpio gpio_dev = { .pdev = pdev };
+	struct pinctrl_desc *desc = &amd_pinctrl_desc;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pdev);
+
+	device_property_add_properties(&pdev->dev, iomux_prop_absent);
+
 	amd_get_iomux_res(&gpio_dev);
-	
-	KUNIT_EXPECT_PTR_EQ(test, amd_pinctrl_desc.pmxops, NULL);
+
+	KUNIT_EXPECT_PTR_EQ(test, desc->pmxops, (const struct pinmux_ops *)NULL);
 }
 
-static int device_property_match_string_success_mock(struct device *dev, const char *propname, const char *string)
+static void test_amd_get_iomux_res_ioremap_failure(struct kunit *test)
 {
-	return 0;
-}
+	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
+	struct amd_gpio gpio_dev = { .pdev = pdev };
+	struct pinctrl_desc *desc = &amd_pinctrl_desc;
 
-static void __iomem *devm_platform_ioremap_resource_success_mock(struct platform_device *pdev, int index)
-{
-	return (void __iomem *)0x1000;
-}
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pdev);
 
-static void test_amd_get_iomux_res_ioremap_success(struct kunit *test)
-{
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
-	struct device dev;
-	
-	gpio_dev.pdev = &pdev;
-	pdev.dev = &dev;
-	amd_pinctrl_desc.pmxops = (void *)0x1234;
-	
-	device_property_match_string = device_property_match_string_success_mock;
-	devm_platform_ioremap_resource = devm_platform_ioremap_resource_success_mock;
-	
+	device_property_add_properties(&pdev->dev, iomux_prop_present);
+
 	amd_get_iomux_res(&gpio_dev);
-	
-	KUNIT_EXPECT_PTR_EQ(test, gpio_dev.iomux_base, (void __iomem *)0x1000);
-	KUNIT_EXPECT_PTR_EQ(test, amd_pinctrl_desc.pmxops, (void *)0x1234);
-	
-	device_property_match_string = device_property_match_string_mock;
-	devm_platform_ioremap_resource = devm_platform_ioremap_resource_mock;
+
+	KUNIT_EXPECT_PTR_EQ(test, desc->pmxops, (const struct pinmux_ops *)NULL);
 }
 
-static void __iomem *devm_platform_ioremap_resource_fail_mock(struct platform_device *pdev, int index)
+static void test_amd_get_iomux_res_success(struct kunit *test)
 {
-	return ERR_PTR(-EINVAL);
-}
+	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
+	struct amd_gpio gpio_dev = { .pdev = pdev };
+	struct pinctrl_desc *desc = &amd_pinctrl_desc;
+	struct resource res = {
+		.start = 0x1000,
+		.end = 0x1FFF,
+		.flags = IORESOURCE_MEM,
+		.name = "iomux"
+	};
 
-static void test_amd_get_iomux_res_ioremap_fail(struct kunit *test)
-{
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
-	struct device dev;
-	
-	gpio_dev.pdev = &pdev;
-	pdev.dev = &dev;
-	amd_pinctrl_desc.pmxops = (void *)0x1234;
-	
-	device_property_match_string = device_property_match_string_success_mock;
-	devm_platform_ioremap_resource = devm_platform_ioremap_resource_fail_mock;
-	
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pdev);
+
+	device_property_add_properties(&pdev->dev, iomux_prop_present);
+	pdev->num_resources = 1;
+	pdev->resource = &res;
+
+	desc->pmxops = (const struct pinmux_ops *)0xDEADBEEF;
+
 	amd_get_iomux_res(&gpio_dev);
-	
-	KUNIT_EXPECT_TRUE(test, IS_ERR(gpio_dev.iomux_base));
-	KUNIT_EXPECT_PTR_EQ(test, amd_pinctrl_desc.pmxops, NULL);
-	
-	device_property_match_string = device_property_match_string_mock;
-	devm_platform_ioremap_resource = devm_platform_ioremap_resource_mock;
+
+	KUNIT_EXPECT_NE(test, gpio_dev.iomux_base, (void __iomem *)NULL);
+	KUNIT_EXPECT_PTR_NE(test, desc->pmxops, (const struct pinmux_ops *)NULL);
 }
 
 static struct kunit_case amd_get_iomux_res_test_cases[] = {
-	KUNIT_CASE(test_amd_get_iomux_res_device_property_fail),
-	KUNIT_CASE(test_amd_get_iomux_res_ioremap_success),
-	KUNIT_CASE(test_amd_get_iomux_res_ioremap_fail),
+	KUNIT_CASE(test_amd_get_iomux_res_property_not_found),
+	KUNIT_CASE(test_amd_get_iomux_res_ioremap_failure),
+	KUNIT_CASE(test_amd_get_iomux_res_success),
 	{}
 };
 
@@ -136,3 +126,4 @@ static struct kunit_suite amd_get_iomux_res_test_suite = {
 };
 
 kunit_test_suite(amd_get_iomux_res_test_suite);
+```

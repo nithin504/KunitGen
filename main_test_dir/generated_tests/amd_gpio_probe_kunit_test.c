@@ -1,113 +1,211 @@
+```c
+// SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/platform_device.h>
+#include <linux/ioport.h>
 #include <linux/gpio/driver.h>
 #include <linux/pinctrl/pinctrl.h>
-#include <linux/ioport.h>
-#include <linux/io.h>
-#include <linux/acpi.h>
-#include <linux/spinlock.h>
-#include <linux/err.h>
 #include <linux/interrupt.h>
-#include <linux/suspend.h>
+#include <linux/acpi.h>
+#include <linux/io.h>
 
-static struct amd_gpio {
-	struct gpio_chip gc;
-	struct pinctrl_dev *pctrl;
-	raw_spinlock_t lock;
+#define AMD_GPIO_MOCK_BASE_ADDR 0x1000
+#define AMD_GPIO_MOCK_IRQ 25
+
+struct amd_gpio {
 	void __iomem *base;
 	int irq;
+	struct gpio_chip gc;
+	struct pinctrl_dev *pctrl;
 	struct platform_device *pdev;
+	const struct pinctrl_pin_desc *groups;
+	unsigned int ngroups;
+	unsigned int hwbank_num;
 #ifdef CONFIG_SUSPEND
 	u32 *saved_regs;
 #endif
-	int hwbank_num;
-	const struct group_desc *groups;
-	unsigned ngroups;
-} mock_gpio_dev;
-
-static struct pinctrl_desc amd_pinctrl_desc;
-static const struct group_desc kerncz_groups[] = {};
-
-static void amd_gpio_irq_init(struct amd_gpio *gpio_dev) {}
-static int amd_gpio_get_direction(struct gpio_chip *gc, unsigned offset) { return 0; }
-static int amd_gpio_direction_input(struct gpio_chip *gc, unsigned offset) { return 0; }
-static int amd_gpio_direction_output(struct gpio_chip *gc, unsigned offset, int value) { return 0; }
-static int amd_gpio_get_value(struct gpio_chip *gc, unsigned offset) { return 0; }
-static void amd_gpio_set_value(struct gpio_chip *gc, unsigned offset, int value) {}
-static int amd_gpio_set_config(struct gpio_chip *gc, unsigned offset, unsigned long config) { return 0; }
-static void amd_gpio_dbg_show(struct seq_file *s, struct gpio_chip *gc) {}
-static void amd_get_iomux_res(struct amd_gpio *gpio_dev) {}
-static irqreturn_t amd_gpio_irq_handler(int irq, void *dev_id) { return IRQ_NONE; }
-static bool amd_gpio_check_wake(int irq, void *dev_id) { return false; }
-static void amd_gpio_register_s2idle_ops(void) {}
-static struct irq_chip amd_gpio_irqchip;
-
-static char test_mmio_buffer[8192];
-static struct resource test_res = {
-	.start = 0x1000,
-	.end = 0x1FFF,
-	.name = "test_gpio",
-	.flags = IORESOURCE_MEM,
+	raw_spinlock_t lock;
 };
 
-static int platform_get_irq_mock(struct platform_device *pdev, unsigned int num)
-{
-	return 123;
-}
+struct pinctrl_desc amd_pinctrl_desc = {
+	.name = "amd-pinctrl-mock",
+	.pins = NULL,
+	.npins = 0,
+	.pctlops = NULL,
+	.pmxops = NULL,
+	.confops = NULL,
+	.owner = THIS_MODULE,
+};
 
-static void *devm_kzalloc_mock(struct device *dev, size_t size, gfp_t gfp)
-{
-	return kunit_kzalloc(test, size, gfp);
-}
+static const struct pinctrl_pin_desc kerncz_groups[] = {
+	{ .number = 0, .name = "group0" },
+	{ .number = 1, .name = "group1" },
+};
 
-static void *devm_kcalloc_mock(struct device *dev, size_t n, size_t size, gfp_t gfp)
-{
-	return kunit_kcalloc(test, n, size, gfp);
-}
-
-static void *devm_platform_get_and_ioremap_resource_mock(struct platform_device *pdev, unsigned int index, struct resource **res)
-{
-	*res = &test_res;
-	return test_mmio_buffer;
-}
-
-static struct pinctrl_dev *devm_pinctrl_register_mock(struct device *dev, const struct pinctrl_desc *pctldesc, void *driver_data)
-{
-	return driver_data;
-}
-
-static int gpiochip_add_data_mock(struct gpio_chip *gc, void *data)
+static int amd_gpio_get_direction(struct gpio_chip *gc, unsigned int offset)
 {
 	return 0;
 }
 
-static int gpiochip_add_pin_range_mock(struct gpio_chip *gc, const char *pinctl_name, unsigned int gpio_offset, unsigned int pin_offset, unsigned int npins)
+static int amd_gpio_direction_input(struct gpio_chip *gc, unsigned int offset)
 {
 	return 0;
 }
 
-static int devm_request_irq_mock(struct device *dev, unsigned int irq, irq_handler_t handler, unsigned long flags, const char *name, void *dev_id)
+static int amd_gpio_direction_output(struct gpio_chip *gc, unsigned int offset, int value)
 {
 	return 0;
 }
 
-static void acpi_register_wakeup_handler_mock(int irq, bool (*wake)(int, void*), void *dev) {}
+static int amd_gpio_get_value(struct gpio_chip *gc, unsigned int offset)
+{
+	return 0;
+}
 
-static void platform_set_drvdata_mock(struct platform_device *pdev, void *data) {}
+static void amd_gpio_set_value(struct gpio_chip *gc, unsigned int offset, int value)
+{
+}
 
-static void gpiochip_remove_mock(struct gpio_chip *gc) {}
+static int amd_gpio_set_config(struct gpio_chip *gc, unsigned int offset, unsigned long config)
+{
+	return 0;
+}
 
-#define devm_kzalloc(...) devm_kzalloc_mock(__VA_ARGS__)
-#define devm_kcalloc(...) devm_kcalloc_mock(__VA_ARGS__)
-#define devm_platform_get_and_ioremap_resource(...) devm_platform_get_and_ioremap_resource_mock(__VA_ARGS__)
-#define platform_get_irq(...) platform_get_irq_mock(__VA_ARGS__)
-#define devm_pinctrl_register(...) devm_pinctrl_register_mock(__VA_ARGS__)
-#define gpiochip_add_data(...) gpiochip_add_data_mock(__VA_ARGS__)
-#define gpiochip_add_pin_range(...) gpiochip_add_pin_range_mock(__VA_ARGS__)
-#define devm_request_irq(...) devm_request_irq_mock(__VA_ARGS__)
-#define acpi_register_wakeup_handler(...) acpi_register_wakeup_handler_mock(__VA_ARGS__)
-#define platform_set_drvdata(...) platform_set_drvdata_mock(__VA_ARGS__)
-#define gpiochip_remove(...) gpiochip_remove_mock(__VA_ARGS__)
+static void amd_gpio_dbg_show(struct seq_file *s, struct gpio_chip *gc)
+{
+}
+
+static void amd_gpio_irq_init(struct amd_gpio *gpio_dev)
+{
+}
+
+static struct gpio_irq_chip amd_gpio_irqchip = {
+	.irq_mask = NULL,
+	.irq_unmask = NULL,
+};
+
+static irqreturn_t amd_gpio_irq_handler(int irq, void *data)
+{
+	return IRQ_HANDLED;
+}
+
+static bool amd_gpio_check_wake(struct device *dev)
+{
+	return false;
+}
+
+static void amd_gpio_register_s2idle_ops(void)
+{
+}
+
+static void *mock_devm_kzalloc(struct device *dev, size_t size, gfp_t gfp)
+{
+	static char buffer[16384];
+	static size_t offset = 0;
+	size_t aligned_size = (size + 7) & ~7;
+	if (offset + aligned_size > sizeof(buffer))
+		return NULL;
+	void *ptr = buffer + offset;
+	offset += aligned_size;
+	memset(ptr, 0, size);
+	return ptr;
+}
+
+#define devm_kzalloc(dev, size, gfp) mock_devm_kzalloc(dev, size, gfp)
+
+static void *mock_devm_kcalloc(struct device *dev, size_t n, size_t size, gfp_t gfp)
+{
+	return mock_devm_kzalloc(dev, n * size, gfp);
+}
+
+#define devm_kcalloc(dev, n, size, gfp) mock_devm_kcalloc(dev, n, size, gfp)
+
+static void __iomem *mock_devm_ioremap_resource(struct device *dev, struct resource *res)
+{
+	static char mmio_buffer[8192];
+	return (void __iomem *)mmio_buffer;
+}
+
+#define devm_platform_get_and_ioremap_resource(pdev, index, res) \
+	({ \
+		*(res) = kunit_kzalloc(test, sizeof(struct resource), GFP_KERNEL); \
+		if (*(res)) { \
+			(*(res))->start = AMD_GPIO_MOCK_BASE_ADDR; \
+			(*(res))->end = AMD_GPIO_MOCK_BASE_ADDR + 0x1000 - 1; \
+			(*(res))->flags = IORESOURCE_MEM; \
+		} \
+		mock_devm_ioremap_resource(&(pdev)->dev, *(res)); \
+	})
+
+static int mock_platform_get_irq(struct platform_device *pdev, unsigned int num)
+{
+	return AMD_GPIO_MOCK_IRQ;
+}
+
+#define platform_get_irq(pdev, num) mock_platform_get_irq(pdev, num)
+
+static int mock_gpiochip_add_data(struct gpio_chip *gc, void *data)
+{
+	return 0;
+}
+
+#define gpiochip_add_data(gc, data) mock_gpiochip_add_data(gc, data)
+
+static int mock_gpiochip_add_pin_range(struct gpio_chip *gc, const char *pin_group,
+				       unsigned int pin_base, unsigned int npins)
+{
+	return 0;
+}
+
+#define gpiochip_add_pin_range(gc, pin_group, pin_base, npins) \
+	mock_gpiochip_add_pin_range(gc, pin_group, pin_base, npins)
+
+static int mock_devm_request_irq(struct device *dev, unsigned int irq, irq_handler_t handler,
+				 unsigned long flags, const char *name, void *dev)
+{
+	return 0;
+}
+
+#define devm_request_irq(dev, irq, handler, flags, name, dev_ptr) \
+	mock_devm_request_irq(dev, irq, handler, flags, name, dev_ptr)
+
+static struct pinctrl_dev *mock_devm_pinctrl_register(struct device *dev,
+						      const struct pinctrl_desc *pctldesc,
+						      void *driver_data)
+{
+	static struct pinctrl_dev pctrl_dev;
+	return &pctrl_dev;
+}
+
+#define devm_pinctrl_register(dev, pctldesc, driver_data) \
+	mock_devm_pinctrl_register(dev, pctldesc, driver_data)
+
+static void mock_gpiochip_remove(struct gpio_chip *gc)
+{
+}
+
+#define gpiochip_remove(gc) mock_gpiochip_remove(gc)
+
+static void mock_platform_set_drvdata(struct platform_device *pdev, void *data)
+{
+}
+
+#define platform_set_drvdata(pdev, data) mock_platform_set_drvdata(pdev, data)
+
+static void mock_acpi_register_wakeup_handler(int irq, bool (*func)(struct device *dev), void *context)
+{
+}
+
+#define acpi_register_wakeup_handler(irq, func, context) \
+	mock_acpi_register_wakeup_handler(irq, func, context)
+
+static void mock_amd_get_iomux_res(struct amd_gpio *gpio_dev)
+{
+}
+
+#define amd_get_iomux_res(gpio_dev) mock_amd_get_iomux_res(gpio_dev)
+
+static struct kunit *test;
 
 static int amd_gpio_probe(struct platform_device *pdev)
 {
@@ -125,6 +223,7 @@ static int amd_gpio_probe(struct platform_device *pdev)
 
 	gpio_dev->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
 	if (IS_ERR(gpio_dev->base)) {
+		dev_err(&pdev->dev, "Failed to get gpio io resource.\n");
 		return PTR_ERR(gpio_dev->base);
 	}
 
@@ -144,16 +243,16 @@ static int amd_gpio_probe(struct platform_device *pdev)
 	gpio_dev->gc.get_direction	= amd_gpio_get_direction;
 	gpio_dev->gc.direction_input	= amd_gpio_direction_input;
 	gpio_dev->gc.direction_output	= amd_gpio_direction_output;
-	gpio_dev->gc.get			= amd_gpio_get_value;
-	gpio_dev->gc.set			= amd_gpio_set_value;
+	gpio_dev->gc.get		= amd_gpio_get_value;
+	gpio_dev->gc.set		= amd_gpio_set_value;
 	gpio_dev->gc.set_config		= amd_gpio_set_config;
 	gpio_dev->gc.dbg_show		= amd_gpio_dbg_show;
 
 	gpio_dev->gc.base		= -1;
-	gpio_dev->gc.label			= pdev->name;
-	gpio_dev->gc.owner			= THIS_MODULE;
-	gpio_dev->gc.parent			= &pdev->dev;
-	gpio_dev->gc.ngpio			= resource_size(res) / 4;
+	gpio_dev->gc.label		= pdev->name;
+	gpio_dev->gc.owner		= THIS_MODULE;
+	gpio_dev->gc.parent		= &pdev->dev;
+	gpio_dev->gc.ngpio		= resource_size(res) / 4;
 
 	gpio_dev->hwbank_num = gpio_dev->gc.ngpio / 64;
 	gpio_dev->groups = kerncz_groups;
@@ -164,12 +263,14 @@ static int amd_gpio_probe(struct platform_device *pdev)
 	gpio_dev->pctrl = devm_pinctrl_register(&pdev->dev, &amd_pinctrl_desc,
 						gpio_dev);
 	if (IS_ERR(gpio_dev->pctrl)) {
+		dev_err(&pdev->dev, "Couldn't register pinctrl driver\n");
 		return PTR_ERR(gpio_dev->pctrl);
 	}
 
 	amd_gpio_irq_init(gpio_dev);
 
 	girq = &gpio_dev->gc.irq;
+	gpio_irq_chip_set_chip(girq, &amd_gpio_irqchip);
 	girq->parent_handler = NULL;
 	girq->num_parents = 0;
 	girq->parents = NULL;
@@ -181,8 +282,9 @@ static int amd_gpio_probe(struct platform_device *pdev)
 		return ret;
 
 	ret = gpiochip_add_pin_range(&gpio_dev->gc, dev_name(&pdev->dev),
-				0, 0, gpio_dev->gc.ngpio);
+				     0, 0, gpio_dev->gc.ngpio);
 	if (ret) {
+		dev_err(&pdev->dev, "Failed to add pin range\n");
 		goto out2;
 	}
 
@@ -195,6 +297,7 @@ static int amd_gpio_probe(struct platform_device *pdev)
 	acpi_register_wakeup_handler(gpio_dev->irq, amd_gpio_check_wake, gpio_dev);
 	amd_gpio_register_s2idle_ops();
 
+	dev_dbg(&pdev->dev, "amd gpio driver loaded\n");
 	return ret;
 
 out2:
@@ -203,117 +306,138 @@ out2:
 	return ret;
 }
 
-static void test_amd_gpio_probe_success(struct kunit *test)
+static void test_amd_gpio_probe_success(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_EQ(test, ret, 0);
+	test = t;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, 0);
 }
 
-static void test_amd_gpio_probe_devm_kzalloc_fail(struct kunit *test)
+static void test_amd_gpio_probe_enomem_on_kzalloc_failure(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	kunit_defer_kzalloc(test, false);
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_EQ(test, ret, -ENOMEM);
-	kunit_defer_kzalloc(test, true);
+	test = t;
+	void *(*orig_kzalloc)(struct device *, size_t, gfp_t) = mock_devm_kzalloc;
+	mock_devm_kzalloc = NULL;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, -ENOMEM);
+	mock_devm_kzalloc = orig_kzalloc;
 }
 
-static void test_amd_gpio_probe_ioremap_fail(struct kunit *test)
+static void test_amd_gpio_probe_einval_on_ioremap_failure(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	kunit_defer_devm_platform_get_and_ioremap_resource(test, false);
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_TRUE(test, IS_ERR_VALUE(ret));
-	kunit_defer_devm_platform_get_and_ioremap_resource(test, true);
+	test = t;
+	void *__iomem (*orig_ioremap)(struct device *, struct resource *) = mock_devm_ioremap_resource;
+	mock_devm_ioremap_resource = NULL;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, -EINVAL);
+	mock_devm_ioremap_resource = orig_ioremap;
 }
 
-static void test_amd_gpio_probe_platform_get_irq_fail(struct kunit *test)
+static void test_amd_gpio_probe_enxio_on_irq_failure(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	kunit_defer_platform_get_irq(test, -ENXIO);
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_EQ(test, ret, -ENXIO);
-	kunit_defer_platform_get_irq(test, 123);
+	test = t;
+	int (*orig_get_irq)(struct platform_device *, unsigned int) = mock_platform_get_irq;
+	mock_platform_get_irq = NULL;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, -ENXIO);
+	mock_platform_get_irq = orig_get_irq;
 }
 
 #ifdef CONFIG_SUSPEND
-static void test_amd_gpio_probe_devm_kcalloc_fail(struct kunit *test)
+static void test_amd_gpio_probe_enomem_on_suspend_kcalloc_failure(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	kunit_defer_devm_kcalloc(test, false);
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_EQ(test, ret, -ENOMEM);
-	kunit_defer_devm_kcalloc(test, true);
+	test = t;
+	void *(*orig_kcalloc)(struct device *, size_t, size_t, gfp_t) = mock_devm_kcalloc;
+	mock_devm_kcalloc = NULL;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, -ENOMEM);
+	mock_devm_kcalloc = orig_kcalloc;
 }
 #endif
 
-static void test_amd_gpio_probe_pinctrl_register_fail(struct kunit *test)
+static void test_amd_gpio_probe_eprobe_defer_on_pinctrl_register_failure(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	kunit_defer_devm_pinctrl_register(test, ERR_PTR(-ENODEV));
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_EQ(test, ret, -ENODEV);
-	kunit_defer_devm_pinctrl_register(test, NULL);
+	test = t;
+	struct pinctrl_dev *(*orig_pinctrl_reg)(struct device *,
+					       const struct pinctrl_desc *,
+					       void *) = mock_devm_pinctrl_register;
+	mock_devm_pinctrl_register = NULL;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, -EPERM);
+	mock_devm_pinctrl_register = orig_pinctrl_reg;
 }
 
-static void test_amd_gpio_probe_gpiochip_add_data_fail(struct kunit *test)
+static void test_amd_gpio_probe_eagain_on_gpiochip_add_failure(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	kunit_defer_gpiochip_add_data(test, -ENODEV);
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_EQ(test, ret, -ENODEV);
-	kunit_defer_gpiochip_add_data(test, 0);
+	test = t;
+	int (*orig_gpiochip_add)(struct gpio_chip *, void *) = mock_gpiochip_add_data;
+	mock_gpiochip_add_data = NULL;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, -EINVAL);
+	mock_gpiochip_add_data = orig_gpiochip_add;
 }
 
-static void test_amd_gpio_probe_gpiochip_add_pin_range_fail(struct kunit *test)
+static void test_amd_gpio_probe_eagain_on_gpiochip_add_pin_range_failure(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	kunit_defer_gpiochip_add_pin_range(test, -ENODEV);
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_EQ(test, ret, -ENODEV);
-	kunit_defer_gpiochip_add_pin_range(test, 0);
+	test = t;
+	int (*orig_add_pin_range)(struct gpio_chip *, const char *,
+				  unsigned int, unsigned int) = mock_gpiochip_add_pin_range;
+	mock_gpiochip_add_pin_range = NULL;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, -EINVAL);
+	mock_gpiochip_add_pin_range = orig_add_pin_range;
 }
 
-static void test_amd_gpio_probe_devm_request_irq_fail(struct kunit *test)
+static void test_amd_gpio_probe_eagain_on_devm_request_irq_failure(struct kunit *t)
 {
-	struct platform_device pdev;
-	int ret;
-
-	kunit_defer_devm_request_irq(test, -ENODEV);
-	ret = amd_gpio_probe(&pdev);
-	KUNIT_EXPECT_EQ(test, ret, -ENODEV);
-	kunit_defer_devm_request_irq(test, 0);
+	test = t;
+	int (*orig_req_irq)(struct device *, unsigned int, irq_handler_t,
+			    unsigned long, const char *, void *) = mock_devm_request_irq;
+	mock_devm_request_irq = NULL;
+	struct platform_device *pdev = kunit_kzalloc(t, sizeof(*pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(t, pdev);
+	pdev->name = "amd-gpio-test";
+	int ret = amd_gpio_probe(pdev);
+	KUNIT_EXPECT_EQ(t, ret, -EINVAL);
+	mock_devm_request_irq = orig_req_irq;
 }
 
 static struct kunit_case amd_gpio_probe_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_probe_success),
-	KUNIT_CASE(test_amd_gpio_probe_devm_kzalloc_fail),
-	KUNIT_CASE(test_amd_gpio_probe_ioremap_fail),
-	KUNIT_CASE(test_amd_gpio_probe_platform_get_irq_fail),
+	KUNIT_CASE(test_amd_gpio_probe_enomem_on_kzalloc_failure),
+	KUNIT_CASE(test_amd_gpio_probe_einval_on_ioremap_failure),
+	KUNIT_CASE(test_amd_gpio_probe_enxio_on_irq_failure),
 #ifdef CONFIG_SUSPEND
-	KUNIT_CASE(test_amd_gpio_probe_devm_kcalloc_fail),
+	KUNIT_CASE(test_amd_gpio_probe_enomem_on_suspend_kcalloc_failure),
 #endif
-	KUNIT_CASE(test_amd_gpio_probe_pinctrl_register_fail),
-	KUNIT_CASE(test_amd_gpio_probe_gpiochip_add_data_fail),
-	KUNIT_CASE(test_amd_gpio_probe_gpiochip_add_pin_range_fail),
-	KUNIT_CASE(test_amd_gpio_probe_devm_request_irq_fail),
+	KUNIT_CASE(test_amd_gpio_probe_eprobe_defer_on_pinctrl_register_failure),
+	KUNIT_CASE(test_amd_gpio_probe_eagain_on_gpiochip_add_failure),
+	KUNIT_CASE(test_amd_gpio_probe_eagain_on_gpiochip_add_pin_range_failure),
+	KUNIT_CASE(test_amd_gpio_probe_eagain_on_devm_request_irq_failure),
 	{}
 };
 
@@ -323,3 +447,4 @@ static struct kunit_suite amd_gpio_probe_test_suite = {
 };
 
 kunit_test_suite(amd_gpio_probe_test_suite);
+```

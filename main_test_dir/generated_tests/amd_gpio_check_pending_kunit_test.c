@@ -1,156 +1,142 @@
-
+```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/io.h>
 #include <linux/pinctrl/pinctrl.h>
-#include <linux/printk.h>
+#include "pinctrl-amd.c"
 
-#define PIN_IRQ_PENDING (1 << 28)
+#define MOCK_BASE_ADDR 0x1000
+#define PIN_IRQ_PENDING 0x1
 
-static struct pinctrl_dev *pinctrl_dev;
+static struct amd_gpio mock_gpio_dev;
+static struct pinctrl_dev mock_pctldev;
+static struct pinctrl_desc mock_pinctrl_desc;
+static struct pinctrl_pin_desc mock_pins[10];
+static char mmio_buffer[4096];
 
-struct amd_gpio {
-	struct pinctrl_dev *pctrl;
-	void __iomem *base;
-};
+static bool pm_debug_messages_on_saved;
+static int readl_call_count;
+static u32 readl_return_values[10];
+static int pm_pr_dbg_call_count;
 
-struct pinctrl_desc {
-	unsigned int npins;
-	struct pinctrl_pin_desc *pins;
-};
+bool pm_debug_messages_on = false;
 
-struct pinctrl_pin_desc {
-	unsigned int number;
-};
-
-static bool pm_debug_messages_on;
-
-static void pm_pr_dbg(const char *fmt, ...) {}
-
-static void amd_gpio_check_pending(void)
+u32 readl(const volatile void __iomem *addr)
 {
-	struct amd_gpio *gpio_dev = pinctrl_dev;
-	const struct pinctrl_desc *desc = gpio_dev->pctrl->desc;
-	int i;
-
-	if (!pm_debug_messages_on)
-		return;
-
-	for (i = 0; i < desc->npins; i++) {
-		int pin = desc->pins[i].number;
-		u32 tmp;
-
-		tmp = readl(gpio_dev->base + pin * 4);
-		if (tmp & PIN_IRQ_PENDING)
-			pm_pr_dbg("%s: GPIO %d is active: 0x%x.\n", __func__, pin, tmp);
-	}
+	readl_call_count++;
+	if (readl_call_count <= 10 && readl_return_values[readl_call_count - 1] != 0xFFFFFFFF)
+		return readl_return_values[readl_call_count - 1];
+	return 0;
 }
 
-static char test_mmio_buffer[4096];
-static struct amd_gpio mock_gpio_dev;
-static struct pinctrl_dev mock_pctrl_dev;
-static struct pinctrl_desc mock_pinctrl_desc;
-static struct pinctrl_pin_desc mock_pins[4];
+void pm_pr_dbg(const char *fmt, ...)
+{
+	pm_pr_dbg_call_count++;
+}
 
-static void test_amd_gpio_check_pending_pm_debug_disabled(struct kunit *test)
+static void test_amd_gpio_check_pending_pm_debug_off(struct kunit *test)
 {
 	pm_debug_messages_on = false;
-	pinctrl_dev = &mock_pctrl_dev;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	
 	amd_gpio_check_pending();
-	
-	KUNIT_EXPECT_TRUE(test, true);
-}
-
-static void test_amd_gpio_check_pending_no_pins(struct kunit *test)
-{
-	pm_debug_messages_on = true;
-	pinctrl_dev = &mock_pctrl_dev;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_gpio_dev.base = test_mmio_buffer;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	mock_pinctrl_desc.npins = 0;
-	mock_pinctrl_desc.pins = mock_pins;
-	
-	amd_gpio_check_pending();
-	
-	KUNIT_EXPECT_TRUE(test, true);
+	KUNIT_EXPECT_EQ(test, readl_call_count, 0);
+	KUNIT_EXPECT_EQ(test, pm_pr_dbg_call_count, 0);
 }
 
 static void test_amd_gpio_check_pending_no_irq_pending(struct kunit *test)
 {
+	int i;
+	
 	pm_debug_messages_on = true;
-	pinctrl_dev = &mock_pctrl_dev;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_gpio_dev.base = test_mmio_buffer;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	mock_pinctrl_desc.npins = 2;
-	mock_pinctrl_desc.pins = mock_pins;
-	mock_pins[0].number = 0;
-	mock_pins[1].number = 1;
+	readl_call_count = 0;
+	pm_pr_dbg_call_count = 0;
 	
-	writel(0x0, test_mmio_buffer + 0 * 4);
-	writel(0x0, test_mmio_buffer + 1 * 4);
-	
-	amd_gpio_check_pending();
-	
-	KUNIT_EXPECT_TRUE(test, true);
-}
-
-static void test_amd_gpio_check_pending_with_irq_pending(struct kunit *test)
-{
-	pm_debug_messages_on = true;
-	pinctrl_dev = &mock_pctrl_dev;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_gpio_dev.base = test_mmio_buffer;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.pctrl = &mock_pctldev;
+	mock_pctldev.desc = &mock_pinctrl_desc;
 	mock_pinctrl_desc.npins = 3;
 	mock_pinctrl_desc.pins = mock_pins;
-	mock_pins[0].number = 0;
-	mock_pins[1].number = 1;
-	mock_pins[2].number = 2;
 	
-	writel(0x0, test_mmio_buffer + 0 * 4);
-	writel(PIN_IRQ_PENDING, test_mmio_buffer + 1 * 4);
-	writel(PIN_IRQ_PENDING | 0x123, test_mmio_buffer + 2 * 4);
+	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
+		mock_pins[i].number = i;
+		readl_return_values[i] = 0x0;
+	}
 	
 	amd_gpio_check_pending();
-	
-	KUNIT_EXPECT_TRUE(test, true);
+	KUNIT_EXPECT_EQ(test, readl_call_count, mock_pinctrl_desc.npins);
+	KUNIT_EXPECT_EQ(test, pm_pr_dbg_call_count, 0);
 }
 
-static void test_amd_gpio_check_pending_multiple_pins(struct kunit *test)
+static void test_amd_gpio_check_pending_single_irq_pending(struct kunit *test)
 {
-	pm_debug_messages_on = true;
-	pinctrl_dev = &mock_pctrl_dev;
-	mock_gpio_dev.pctrl = &mock_pctrl_dev;
-	mock_gpio_dev.base = test_mmio_buffer;
-	mock_pctrl_dev.desc = &mock_pinctrl_desc;
-	mock_pinctrl_desc.npins = 4;
-	mock_pinctrl_desc.pins = mock_pins;
-	mock_pins[0].number = 0;
-	mock_pins[1].number = 1;
-	mock_pins[2].number = 2;
-	mock_pins[3].number = 3;
+	int i;
 	
-	writel(PIN_IRQ_PENDING, test_mmio_buffer + 0 * 4);
-	writel(PIN_IRQ_PENDING, test_mmio_buffer + 1 * 4);
-	writel(PIN_IRQ_PENDING, test_mmio_buffer + 2 * 4);
-	writel(PIN_IRQ_PENDING, test_mmio_buffer + 3 * 4);
+	pm_debug_messages_on = true;
+	readl_call_count = 0;
+	pm_pr_dbg_call_count = 0;
+	
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.pctrl = &mock_pctldev;
+	mock_pctldev.desc = &mock_pinctrl_desc;
+	mock_pinctrl_desc.npins = 3;
+	mock_pinctrl_desc.pins = mock_pins;
+	
+	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
+		mock_pins[i].number = i;
+		readl_return_values[i] = (i == 1) ? PIN_IRQ_PENDING : 0x0;
+	}
 	
 	amd_gpio_check_pending();
+	KUNIT_EXPECT_EQ(test, readl_call_count, mock_pinctrl_desc.npins);
+	KUNIT_EXPECT_EQ(test, pm_pr_dbg_call_count, 1);
+}
+
+static void test_amd_gpio_check_pending_all_irq_pending(struct kunit *test)
+{
+	int i;
 	
-	KUNIT_EXPECT_TRUE(test, true);
+	pm_debug_messages_on = true;
+	readl_call_count = 0;
+	pm_pr_dbg_call_count = 0;
+	
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.pctrl = &mock_pctldev;
+	mock_pctldev.desc = &mock_pinctrl_desc;
+	mock_pinctrl_desc.npins = 3;
+	mock_pinctrl_desc.pins = mock_pins;
+	
+	for (i = 0; i < mock_pinctrl_desc.npins; i++) {
+		mock_pins[i].number = i;
+		readl_return_values[i] = PIN_IRQ_PENDING;
+	}
+	
+	amd_gpio_check_pending();
+	KUNIT_EXPECT_EQ(test, readl_call_count, mock_pinctrl_desc.npins);
+	KUNIT_EXPECT_EQ(test, pm_pr_dbg_call_count, mock_pinctrl_desc.npins);
+}
+
+static void test_amd_gpio_check_pending_zero_pins(struct kunit *test)
+{
+	pm_debug_messages_on = true;
+	readl_call_count = 0;
+	pm_pr_dbg_call_count = 0;
+	
+	mock_gpio_dev.base = mmio_buffer;
+	mock_gpio_dev.pctrl = &mock_pctldev;
+	mock_pctldev.desc = &mock_pinctrl_desc;
+	mock_pinctrl_desc.npins = 0;
+	mock_pinctrl_desc.pins = mock_pins;
+	
+	amd_gpio_check_pending();
+	KUNIT_EXPECT_EQ(test, readl_call_count, 0);
+	KUNIT_EXPECT_EQ(test, pm_pr_dbg_call_count, 0);
 }
 
 static struct kunit_case amd_gpio_check_pending_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_check_pending_pm_debug_disabled),
-	KUNIT_CASE(test_amd_gpio_check_pending_no_pins),
+	KUNIT_CASE(test_amd_gpio_check_pending_pm_debug_off),
 	KUNIT_CASE(test_amd_gpio_check_pending_no_irq_pending),
-	KUNIT_CASE(test_amd_gpio_check_pending_with_irq_pending),
-	KUNIT_CASE(test_amd_gpio_check_pending_multiple_pins),
+	KUNIT_CASE(test_amd_gpio_check_pending_single_irq_pending),
+	KUNIT_CASE(test_amd_gpio_check_pending_all_irq_pending),
+	KUNIT_CASE(test_amd_gpio_check_pending_zero_pins),
 	{}
 };
 
@@ -160,3 +146,4 @@ static struct kunit_suite amd_gpio_check_pending_test_suite = {
 };
 
 kunit_test_suite(amd_gpio_check_pending_test_suite);
+```

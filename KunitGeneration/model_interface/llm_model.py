@@ -50,14 +50,14 @@ class KUnitTestGenerator:
     def _load_environment(self):
         """Loads environment variables from a .env file."""
         load_dotenv()
-        self.api_key = os.environ.get("OPENROUTER_API_KEY")
+        self.api_key = os.environ.get("NVIDIA_API_KEY")
         if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY environment variable not set.")
+            raise ValueError("NVIDIA_API_KEY environment variable not set.")
 
     def _initialize_client(self):
         """Initializes the OpenAI client for OpenRouter."""
         return OpenAI(
-            base_url="https://openrouter.ai/api/v1",
+            base_url="https://integrate.api.nvidia.com/v1",
             api_key=self.api_key,
         )
 

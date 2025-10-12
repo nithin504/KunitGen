@@ -1,16 +1,27 @@
+```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/gpio/driver.h>
-#include <linux/spinlock.h>
 #include <linux/io.h>
+#include <linux/spinlock.h>
 
-#define OUTPUT_ENABLE_OFF 11
-#define OUTPUT_VALUE_OFF 9
+#define OUTPUT_ENABLE_OFF 22
+#define OUTPUT_VALUE_OFF 16
 
 struct amd_gpio {
 	void __iomem *base;
 	raw_spinlock_t lock;
 };
+
+static struct amd_gpio mock_gpio_dev;
+static char mock_mmio_region[4096];
+
+static void *__wrap_gpiochip_get_data(struct gpio_chip *gc)
+{
+	return &mock_gpio_dev;
+}
+
+#define gpiochip_get_data __wrap_gpiochip_get_data
 
 static int amd_gpio_direction_output(struct gpio_chip *gc, unsigned offset, int value)
 {
@@ -31,123 +42,83 @@ static int amd_gpio_direction_output(struct gpio_chip *gc, unsigned offset, int 
 	return 0;
 }
 
-static char test_mmio_buffer[4096];
-static struct amd_gpio test_gpio_dev;
-static struct gpio_chip test_gc;
-
 static void test_amd_gpio_direction_output_value_high(struct kunit *test)
 {
-	unsigned long flags;
-	u32 initial_reg = 0;
-	u32 expected_reg;
-	
-	test_gpio_dev.base = test_mmio_buffer;
-	raw_spin_lock_init(&test_gpio_dev.lock);
-	writel(initial_reg, test_gpio_dev.base + 0 * 4);
+	struct gpio_chip gc;
+	unsigned offset = 1;
+	int value = 1;
+	u32 reg_val;
 
-	int ret = amd_gpio_direction_output(&test_gc, 0, 1);
-	
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	
-	raw_spin_lock_irqsave(&test_gpio_dev.lock, flags);
-	u32 result_reg = readl(test_gpio_dev.base + 0 * 4);
-	raw_spin_unlock_irqrestore(&test_gpio_dev.lock, flags);
-	
-	expected_reg = initial_reg | BIT(OUTPUT_ENABLE_OFF) | BIT(OUTPUT_VALUE_OFF);
-	KUNIT_EXPECT_EQ(test, result_reg, expected_reg);
+	mock_gpio_dev.base = mock_mmio_region;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0x0, mock_gpio_dev.base + offset * 4);
+
+	amd_gpio_direction_output(&gc, offset, value);
+
+	reg_val = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(OUTPUT_ENABLE_OFF)));
+	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(OUTPUT_VALUE_OFF)));
 }
 
 static void test_amd_gpio_direction_output_value_low(struct kunit *test)
 {
-	unsigned long flags;
-	u32 initial_reg = BIT(OUTPUT_VALUE_OFF);
-	u32 expected_reg;
-	
-	test_gpio_dev.base = test_mmio_buffer;
-	raw_spin_lock_init(&test_gpio_dev.lock);
-	writel(initial_reg, test_gpio_dev.base + 1 * 4);
+	struct gpio_chip gc;
+	unsigned offset = 2;
+	int value = 0;
+	u32 reg_val;
 
-	int ret = amd_gpio_direction_output(&test_gc, 1, 0);
-	
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	
-	raw_spin_lock_irqsave(&test_gpio_dev.lock, flags);
-	u32 result_reg = readl(test_gpio_dev.base + 1 * 4);
-	raw_spin_unlock_irqrestore(&test_gpio_dev.lock, flags);
-	
-	expected_reg = (initial_reg | BIT(OUTPUT_ENABLE_OFF)) & ~BIT(OUTPUT_VALUE_OFF);
-	KUNIT_EXPECT_EQ(test, result_reg, expected_reg);
+	mock_gpio_dev.base = mock_mmio_region;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0xFFFFFFFF, mock_gpio_dev.base + offset * 4);
+
+	amd_gpio_direction_output(&gc, offset, value);
+
+	reg_val = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(OUTPUT_ENABLE_OFF)));
+	KUNIT_EXPECT_TRUE(test, !(reg_val & BIT(OUTPUT_VALUE_OFF)));
 }
 
-static void test_amd_gpio_direction_output_already_configured(struct kunit *test)
+static void test_amd_gpio_direction_output_offset_zero(struct kunit *test)
 {
-	unsigned long flags;
-	u32 initial_reg = BIT(OUTPUT_ENABLE_OFF) | BIT(OUTPUT_VALUE_OFF);
-	
-	test_gpio_dev.base = test_mmio_buffer;
-	raw_spin_lock_init(&test_gpio_dev.lock);
-	writel(initial_reg, test_gpio_dev.base + 2 * 4);
+	struct gpio_chip gc;
+	unsigned offset = 0;
+	int value = 1;
+	u32 reg_val;
 
-	int ret = amd_gpio_direction_output(&test_gc, 2, 1);
-	
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	
-	raw_spin_lock_irqsave(&test_gpio_dev.lock, flags);
-	u32 result_reg = readl(test_gpio_dev.base + 2 * 4);
-	raw_spin_unlock_irqrestore(&test_gpio_dev.lock, flags);
-	
-	KUNIT_EXPECT_EQ(test, result_reg, initial_reg);
+	mock_gpio_dev.base = mock_mmio_region;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0x0, mock_gpio_dev.base + offset * 4);
+
+	amd_gpio_direction_output(&gc, offset, value);
+
+	reg_val = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(OUTPUT_ENABLE_OFF)));
+	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(OUTPUT_VALUE_OFF)));
 }
 
-static void test_amd_gpio_direction_output_different_offset(struct kunit *test)
+static void test_amd_gpio_direction_output_large_offset(struct kunit *test)
 {
-	unsigned long flags;
-	u32 initial_reg = 0;
-	
-	test_gpio_dev.base = test_mmio_buffer;
-	raw_spin_lock_init(&test_gpio_dev.lock);
-	writel(initial_reg, test_gpio_dev.base + 10 * 4);
+	struct gpio_chip gc;
+	unsigned offset = 100;
+	int value = 0;
+	u32 reg_val;
 
-	int ret = amd_gpio_direction_output(&test_gc, 10, 1);
-	
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	
-	raw_spin_lock_irqsave(&test_gpio_dev.lock, flags);
-	u32 result_reg = readl(test_gpio_dev.base + 10 * 4);
-	raw_spin_unlock_irqrestore(&test_gpio_dev.lock, flags);
-	
-	u32 expected_reg = BIT(OUTPUT_ENABLE_OFF) | BIT(OUTPUT_VALUE_OFF);
-	KUNIT_EXPECT_EQ(test, result_reg, expected_reg);
-}
+	mock_gpio_dev.base = mock_mmio_region;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0xFFFFFFFF, mock_gpio_dev.base + offset * 4);
 
-static void test_amd_gpio_direction_output_max_offset(struct kunit *test)
-{
-	unsigned long flags;
-	unsigned max_offset = (sizeof(test_mmio_buffer) / 4) - 1;
-	u32 initial_reg = 0;
-	
-	test_gpio_dev.base = test_mmio_buffer;
-	raw_spin_lock_init(&test_gpio_dev.lock);
-	writel(initial_reg, test_gpio_dev.base + max_offset * 4);
+	amd_gpio_direction_output(&gc, offset, value);
 
-	int ret = amd_gpio_direction_output(&test_gc, max_offset, 0);
-	
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	
-	raw_spin_lock_irqsave(&test_gpio_dev.lock, flags);
-	u32 result_reg = readl(test_gpio_dev.base + max_offset * 4);
-	raw_spin_unlock_irqrestore(&test_gpio_dev.lock, flags);
-	
-	u32 expected_reg = BIT(OUTPUT_ENABLE_OFF);
-	KUNIT_EXPECT_EQ(test, result_reg, expected_reg);
+	reg_val = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(OUTPUT_ENABLE_OFF)));
+	KUNIT_EXPECT_TRUE(test, !(reg_val & BIT(OUTPUT_VALUE_OFF)));
 }
 
 static struct kunit_case amd_gpio_direction_output_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_direction_output_value_high),
 	KUNIT_CASE(test_amd_gpio_direction_output_value_low),
-	KUNIT_CASE(test_amd_gpio_direction_output_already_configured),
-	KUNIT_CASE(test_amd_gpio_direction_output_different_offset),
-	KUNIT_CASE(test_amd_gpio_direction_output_max_offset),
+	KUNIT_CASE(test_amd_gpio_direction_output_offset_zero),
+	KUNIT_CASE(test_amd_gpio_direction_output_large_offset),
 	{}
 };
 
@@ -157,3 +128,4 @@ static struct kunit_suite amd_gpio_direction_output_test_suite = {
 };
 
 kunit_test_suite(amd_gpio_direction_output_test_suite);
+```

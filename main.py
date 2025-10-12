@@ -3,7 +3,7 @@
 import requests
 from pathlib import Path
 from KunitGeneration.model_interface.llm_model import KUnitTestGenerator
-from extractor import CFunctionExtractor  # Or update import path if needed
+from KunitGeneration.data_ingestion.function_extraction import CFunctionExtractor  # Or update import path if needed
 
 def fetch_github_raw_file(url: str) -> str:
     """Download source code from a raw GitHub URL."""
@@ -17,11 +17,11 @@ def fetch_github_raw_file(url: str) -> str:
 
 def main():
     # --- Configuration ---
-    github_raw_url = "https://raw.githubusercontent.com/torvalds/linux/master/mm/memory.c"  # ✅ Replace with your own
+    github_raw_url = "https://raw.githubusercontent.com/torvalds/linux/master/drivers/pinctrl/pinctrl-amd.c"  # ✅ Replace with your own
     main_test_dir = Path("main_test_dir")
-    extracted_dir = main_test_dir / "test_functions"
+    extracted_dir = Path("test_functions")
 
-    model_name = "deepseek/deepseek-chat-v3.1:free"  # Free model on OpenRouter
+    model_name = "qwen/qwen3-coder-480b-a35b-instruct"  # Free model on OpenRouter
     temperature = 0.2
 
     # --- Step 1: Fetch source code from GitHub ---

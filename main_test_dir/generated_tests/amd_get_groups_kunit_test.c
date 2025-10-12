@@ -1,30 +1,40 @@
+```c
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
-#include <linux/platform_device.h>
-#include <linux/errno.h>
 #include <linux/pinctrl/pinctrl.h>
+#include <linux/err.h>
+#include <linux/io.h>
+#include <linux/platform_device.h>
 
-#define pinctrl_dev_get_drvdata mock_pinctrl_dev_get_drvdata
-#define dev_err mock_dev_err
+// Mock includes and definitions
+#define MAX_FUNCTIONS 10
 
-static struct amd_gpio *mock_pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
-{
-	return (struct amd_gpio *)pctldev;
-}
+struct amd_gpio {
+	void __iomem *iomux_base;
+	struct platform_device *pdev;
+};
 
-static int mock_dev_err_count;
-static void mock_dev_err(const struct device *dev, const char *fmt, ...) { mock_dev_err_count++; }
-
-static const struct {
+struct amd_pmx_function {
+	const char *name;
 	const char * const *groups;
 	unsigned int ngroups;
-} pmx_functions[] = {
-	{ (const char * const[]){ "group0", "group1" }, 2 },
-	{ (const char * const[]){ "group2" }, 1 },
-	{ (const char * const[]){ "group3", "group4", "group5" }, 3 },
-	{ NULL, 0 },
-	{ (const char * const[]){ "group6" }, 1 },
 };
+
+static struct amd_pmx_function pmx_functions[MAX_FUNCTIONS];
+
+// Mock pinctrl_dev_get_drvdata
+static void *mock_drvdata;
+
+static void *pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
+{
+	return mock_drvdata;
+}
+
+static struct device mock_dev;
+static struct platform_device mock_pdev;
+static struct amd_gpio mock_gpio_dev;
+static const char * const mock_group_list[] = {"group1", "group2"};
+static char test_mmio_region[4096];
 
 static int amd_get_groups(struct pinctrl_dev *pctrldev, unsigned int selector,
 			  const char * const **groups,
@@ -44,143 +54,71 @@ static int amd_get_groups(struct pinctrl_dev *pctrldev, unsigned int selector,
 
 static void test_amd_get_groups_success(struct kunit *test)
 {
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
+	struct pinctrl_dev dummy_pctldev;
 	const char * const *groups;
 	unsigned int num_groups;
 	int ret;
 
-	gpio_dev.iomux_base = (void *)0x1000;
-	gpio_dev.pdev = &pdev;
-	pctldev = (struct pinctrl_dev)&gpio_dev;
+	mock_drvdata = &mock_gpio_dev;
+	mock_gpio_dev.iomux_base = test_mmio_region;
+	mock_gpio_dev.pdev = &mock_pdev;
+	mock_pdev.dev = mock_dev;
 
-	ret = amd_get_groups(&pctldev, 0, &groups, &num_groups);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_PTR_EQ(test, groups, pmx_functions[0].groups);
-	KUNIT_EXPECT_EQ(test, num_groups, 2);
+	pmx_functions[0].groups = mock_group_list;
+	pmx_functions[0].ngroups = 2;
 
-	ret = amd_get_groups(&pctldev, 1, &groups, &num_groups);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_PTR_EQ(test, groups, pmx_functions[1].groups);
-	KUNIT_EXPECT_EQ(test, num_groups, 1);
+	ret = amd_get_groups(&dummy_pctldev, 0, &groups, &num_groups);
 
-	ret = amd_get_groups(&pctldev, 2, &groups, &num_groups);
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_PTR_EQ(test, groups, pmx_functions[2].groups);
-	KUNIT_EXPECT_EQ(test, num_groups, 3);
+	KUNIT_EXPECT_PTR_EQ(test, groups, mock_group_list);
+	KUNIT_EXPECT_EQ(test, num_groups, 2U);
 }
 
-static void test_amd_get_groups_no_iomux_base(struct kunit *test)
+static void test_amd_get_groups_null_iomux_base(struct kunit *test)
 {
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
-	const char * const *groups;
-	unsigned int num_groups;
+	struct pinctrl_dev dummy_pctldev;
+	const char * const *groups = NULL;
+	unsigned int num_groups = 0;
 	int ret;
 
-	gpio_dev.iomux_base = NULL;
-	gpio_dev.pdev = &pdev;
-	pctldev = (struct pinctrl_dev)&gpio_dev;
-	mock_dev_err_count = 0;
+	mock_drvdata = &mock_gpio_dev;
+	mock_gpio_dev.iomux_base = NULL;
+	mock_gpio_dev.pdev = &mock_pdev;
+	mock_pdev.dev = mock_dev;
 
-	ret = amd_get_groups(&pctldev, 0, &groups, &num_groups);
+	ret = amd_get_groups(&dummy_pctldev, 0, &groups, &num_groups);
+
 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-	KUNIT_EXPECT_EQ(test, mock_dev_err_count, 1);
+	KUNIT_EXPECT_PTR_EQ(test, groups, (const char * const *)NULL);
+	KUNIT_EXPECT_EQ(test, num_groups, 0U);
 }
 
-static void test_amd_get_groups_null_groups(struct kunit *test)
+static void test_amd_get_groups_selector_out_of_bounds(struct kunit *test)
 {
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
-	unsigned int num_groups;
-	int ret;
-
-	gpio_dev.iomux_base = (void *)0x1000;
-	gpio_dev.pdev = &pdev;
-	pctldev = (struct pinctrl_dev)&gpio_dev;
-
-	ret = amd_get_groups(&pctldev, 0, NULL, &num_groups);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static void test_amd_get_groups_null_num_groups(struct kunit *test)
-{
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
-	const char * const *groups;
-	int ret;
-
-	gpio_dev.iomux_base = (void *)0x1000;
-	gpio_dev.pdev = &pdev;
-	pctldev = (struct pinctrl_dev)&gpio_dev;
-
-	ret = amd_get_groups(&pctldev, 0, &groups, NULL);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static void test_amd_get_groups_null_groups_and_num_groups(struct kunit *test)
-{
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
-	int ret;
-
-	gpio_dev.iomux_base = (void *)0x1000;
-	gpio_dev.pdev = &pdev;
-	pctldev = (struct pinctrl_dev)&gpio_dev;
-
-	ret = amd_get_groups(&pctldev, 0, NULL, NULL);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static void test_amd_get_groups_null_groups_struct(struct kunit *test)
-{
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
+	struct pinctrl_dev dummy_pctldev;
 	const char * const *groups;
 	unsigned int num_groups;
 	int ret;
 
-	gpio_dev.iomux_base = (void *)0x1000;
-	gpio_dev.pdev = &pdev;
-	pctldev = (struct pinctrl_dev)&gpio_dev;
+	mock_drvdata = &mock_gpio_dev;
+	mock_gpio_dev.iomux_base = test_mmio_region;
+	mock_gpio_dev.pdev = &mock_pdev;
+	mock_pdev.dev = mock_dev;
 
-	ret = amd_get_groups(&pctldev, 3, &groups, &num_groups);
+	// Accessing uninitialized pmx_functions entry beyond defined range
+	memset(&pmx_functions[MAX_FUNCTIONS - 1], 0, sizeof(struct amd_pmx_function));
+
+	ret = amd_get_groups(&dummy_pctldev, MAX_FUNCTIONS - 1, &groups, &num_groups);
+
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_PTR_EQ(test, groups, NULL);
-	KUNIT_EXPECT_EQ(test, num_groups, 0);
-}
-
-static void test_amd_get_groups_out_of_bounds_selector(struct kunit *test)
-{
-	struct pinctrl_dev pctldev;
-	struct amd_gpio gpio_dev;
-	struct platform_device pdev;
-	const char * const *groups;
-	unsigned int num_groups;
-	int ret;
-
-	gpio_dev.iomux_base = (void *)0x1000;
-	gpio_dev.pdev = &pdev;
-	pctldev = (struct pinctrl_dev)&gpio_dev;
-
-	ret = amd_get_groups(&pctldev, 100, &groups, &num_groups);
-	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_PTR_EQ(test, groups, (const char * const *)NULL);
+	KUNIT_EXPECT_EQ(test, num_groups, 0U);
 }
 
 static struct kunit_case amd_get_groups_test_cases[] = {
 	KUNIT_CASE(test_amd_get_groups_success),
-	KUNIT_CASE(test_amd_get_groups_no_iomux_base),
-	KUNIT_CASE(test_amd_get_groups_null_groups),
-	KUNIT_CASE(test_amd_get_groups_null_num_groups),
-	KUNIT_CASE(test_amd_get_groups_null_groups_and_num_groups),
-	KUNIT_CASE(test_amd_get_groups_null_groups_struct),
-	KUNIT_CASE(test_amd_get_groups_out_of_bounds_selector),
+	KUNIT_CASE(test_amd_get_groups_null_iomux_base),
+	KUNIT_CASE(test_amd_get_groups_selector_out_of_bounds),
 	{}
 };
 
@@ -190,3 +128,4 @@ static struct kunit_suite amd_get_groups_test_suite = {
 };
 
 kunit_test_suite(amd_get_groups_test_suite);
+```
