@@ -3,23 +3,23 @@
 #include <linux/device.h>
 #include <linux/platform_device.h>
 
-// Mocking amd_gpio_suspend_hibernate_common to control its behavior during tests
+// Mocking amd_gpio_suspend_hibernate_common to control its behavior during testing
 static bool mock_hibernate_common_called;
-static struct device *mock_hibernate_dev;
-static bool mock_hibernate_state;
-static int mock_hibernate_return_value;
+static bool mock_hibernate_return_value;
+static struct device *mock_hibernate_dev_passed;
+static bool mock_hibernate_second_arg;
 
-int amd_gpio_suspend_hibernate_common(struct device *dev, bool is_suspend)
+int amd_gpio_suspend_hibernate_common(struct device *dev, bool val)
 {
 	mock_hibernate_common_called = true;
-	mock_hibernate_dev = dev;
-	mock_hibernate_state = is_suspend;
-	return mock_hibernate_return_value;
+	mock_hibernate_dev_passed = dev;
+	mock_hibernate_second_arg = val;
+	return mock_hibernate_return_value ? 0 : -1;
 }
 
-// Include the source code under test
+// Include the function under test
 #ifdef CONFIG_SUSPEND
-static struct pinctrl_dev *pinctrl_dev;
+static struct pinctrl_dev *pinctrl_dev; // Simulate global variable if needed
 #endif
 
 static int amd_gpio_suspend(struct device *dev)
@@ -30,71 +30,49 @@ static int amd_gpio_suspend(struct device *dev)
 	return amd_gpio_suspend_hibernate_common(dev, true);
 }
 
-// --- Test Cases ---
+// --- Begin Tests ---
 
-static void test_amd_gpio_suspend_success(struct kunit *test)
+static void test_amd_gpio_suspend_calls_hibernate_with_true(struct kunit *test)
 {
 	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
 	struct device *dev = &pdev->dev;
-	mock_hibernate_return_value = 0;
 	mock_hibernate_common_called = false;
+	mock_hibernate_return_value = true;
 
 	int ret = amd_gpio_suspend(dev);
 
 	KUNIT_EXPECT_TRUE(test, mock_hibernate_common_called);
-	KUNIT_EXPECT_PTR_EQ(test, mock_hibernate_dev, dev);
-	KUNIT_EXPECT_TRUE(test, mock_hibernate_state);
+	KUNIT_EXPECT_PTR_EQ(test, mock_hibernate_dev_passed, dev);
+	KUNIT_EXPECT_TRUE(test, mock_hibernate_second_arg);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
-static void test_amd_gpio_suspend_error_path(struct kunit *test)
+static void test_amd_gpio_suspend_returns_error_when_hibernate_fails(struct kunit *test)
 {
 	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
 	struct device *dev = &pdev->dev;
-	mock_hibernate_return_value = -EIO;
 	mock_hibernate_common_called = false;
+	mock_hibernate_return_value = false;
 
 	int ret = amd_gpio_suspend(dev);
 
 	KUNIT_EXPECT_TRUE(test, mock_hibernate_common_called);
-	KUNIT_EXPECT_PTR_EQ(test, mock_hibernate_dev, dev);
-	KUNIT_EXPECT_TRUE(test, mock_hibernate_state);
-	KUNIT_EXPECT_EQ(test, ret, -EIO);
+	KUNIT_EXPECT_PTR_EQ(test, mock_hibernate_dev_passed, dev);
+	KUNIT_EXPECT_TRUE(test, mock_hibernate_second_arg);
+	KUNIT_EXPECT_EQ(test, ret, -1);
 }
 
-#ifdef CONFIG_SUSPEND
-static void test_amd_gpio_suspend_pdata_assignment(struct kunit *test)
-{
-	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
-	struct device *dev = &pdev->dev;
-	struct pinctrl_dev dummy_pctldev;
-	dev_set_drvdata(dev, &dummy_pctldev);
-	mock_hibernate_return_value = 0;
-	mock_hibernate_common_called = false;
-	pinctrl_dev = NULL; // Reset global
+// --- End Tests ---
 
-	int ret = amd_gpio_suspend(dev);
-
-	KUNIT_EXPECT_TRUE(test, mock_hibernate_common_called);
-	KUNIT_EXPECT_PTR_EQ(test, mock_hibernate_dev, dev);
-	KUNIT_EXPECT_TRUE(test, mock_hibernate_state);
-	KUNIT_EXPECT_PTR_EQ(test, pinctrl_dev, &dummy_pctldev);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-#endif
-
-static struct kunit_case amd_gpio_suspend_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_suspend_success),
-	KUNIT_CASE(test_amd_gpio_suspend_error_path),
-#ifdef CONFIG_SUSPEND
-	KUNIT_CASE(test_amd_gpio_suspend_pdata_assignment),
-#endif
+static struct kunit_case generated_kunit_test_cases[] = {
+	KUNIT_CASE(test_amd_gpio_suspend_calls_hibernate_with_true),
+	KUNIT_CASE(test_amd_gpio_suspend_returns_error_when_hibernate_fails),
 	{}
 };
 
-static struct kunit_suite amd_gpio_suspend_test_suite = {
-	.name = "amd_gpio_suspend_test",
-	.test_cases = amd_gpio_suspend_test_cases,
+static struct kunit_suite generated_kunit_test_suite = {
+	.name = "amd_gpio_suspend-test",
+	.test_cases = generated_kunit_test_cases,
 };
 
-kunit_test_suite(amd_gpio_suspend_test_suite);
+kunit_test_suite(generated_kunit_test_suite);

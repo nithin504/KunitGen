@@ -13,15 +13,18 @@ static void amd_irq_ack(struct irq_data *d)
 
 static void test_amd_irq_ack_null_irq_data(struct kunit *test)
 {
+	/* Test that the function can handle NULL input gracefully */
 	amd_irq_ack(NULL);
-	KUNIT_EXPECT_EQ(test, 1, 1);
+	KUNIT_PASS(test);
 }
 
 static void test_amd_irq_ack_valid_irq_data(struct kunit *test)
 {
 	struct irq_data data;
+
+	/* Test normal operation with valid irq_data */
 	amd_irq_ack(&data);
-	KUNIT_EXPECT_EQ(test, 1, 1);
+	KUNIT_PASS(test);
 }
 
 static struct kunit_case amd_irq_ack_test_cases[] = {

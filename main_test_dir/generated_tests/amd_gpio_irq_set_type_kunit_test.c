@@ -1,177 +1,347 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/irq.h>
+#include <linux/gpio/driver.h>
 #include <linux/io.h>
 #include <linux/spinlock.h>
-#include "pinctrl-amd.c"
+#include <linux/err.h>
+#include <linux/device.h>
+#include <linux/platform_device.h>
 
-#define TEST_PIN_INDEX 0
-#define MOCK_BASE_ADDR 0x1000
+// Mock definitions for AMD GPIO driver constants
+#define LEVEL_TRIG_OFF          22
+#define ACTIVE_LEVEL_OFF        20
+#define ACTIVE_LEVEL_MASK       0x3
+#define ACTIVE_HIGH             0x1
+#define ACTIVE_LOW              0x0
+#define BOTH_EDGES              0x2
+#define LEVEL_TRIGGER           0x1
+#define CLR_INTR_STAT           0x1
+#define INTERRUPT_STS_OFF       19
+#define INTERRUPT_ENABLE_OFF    16
+#define INTERRUPT_MASK_OFF      17
 
-static char test_mmio_buffer[4096];
-static struct amd_gpio mock_gpio_dev;
-static struct gpio_chip mock_gc;
-static struct irq_data mock_irq_data;
+// Mock structures
+struct amd_gpio {
+	void __iomem *base;
+	raw_spinlock_t lock;
+	struct platform_device *pdev;
+};
 
-static void setup_mock_gpio_dev(void)
+// Function under test
+static int amd_gpio_irq_set_type(struct irq_data *d, unsigned int type)
 {
-	memset(&mock_gpio_dev, 0, sizeof(mock_gpio_dev));
-	mock_gpio_dev.base = test_mmio_buffer;
-	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
-	writel(0x0, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	int ret = 0;
+	u32 pin_reg, pin_reg_irq_en, mask;
+	unsigned long flags;
+	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
+	struct amd_gpio *gpio_dev = gpiochip_get_data(gc);
+	irq_hw_number_t hwirq = irqd_to_hwirq(d);
+
+	raw_spin_lock_irqsave(&gpio_dev->lock, flags);
+	pin_reg = readl(gpio_dev->base + hwirq * 4);
+
+	switch (type & IRQ_TYPE_SENSE_MASK) {
+	case IRQ_TYPE_EDGE_RISING:
+		pin_reg &= ~BIT(LEVEL_TRIG_OFF);
+		pin_reg &= ~(ACTIVE_LEVEL_MASK << ACTIVE_LEVEL_OFF);
+		pin_reg |= ACTIVE_HIGH << ACTIVE_LEVEL_OFF;
+		irq_set_handler_locked(d, handle_edge_irq);
+		break;
+
+	case IRQ_TYPE_EDGE_FALLING:
+		pin_reg &= ~BIT(LEVEL_TRIG_OFF);
+		pin_reg &= ~(ACTIVE_LEVEL_MASK << ACTIVE_LEVEL_OFF);
+		pin_reg |= ACTIVE_LOW << ACTIVE_LEVEL_OFF;
+		irq_set_handler_locked(d, handle_edge_irq);
+		break;
+
+	case IRQ_TYPE_EDGE_BOTH:
+		pin_reg &= ~BIT(LEVEL_TRIG_OFF);
+		pin_reg &= ~(ACTIVE_LEVEL_MASK << ACTIVE_LEVEL_OFF);
+		pin_reg |= BOTH_EDGES << ACTIVE_LEVEL_OFF;
+		irq_set_handler_locked(d, handle_edge_irq);
+		break;
+
+	case IRQ_TYPE_LEVEL_HIGH:
+		pin_reg |= LEVEL_TRIGGER << LEVEL_TRIG_OFF;
+		pin_reg &= ~(ACTIVE_LEVEL_MASK << ACTIVE_LEVEL_OFF);
+		pin_reg |= ACTIVE_HIGH << ACTIVE_LEVEL_OFF;
+		irq_set_handler_locked(d, handle_level_irq);
+		break;
+
+	case IRQ_TYPE_LEVEL_LOW:
+		pin_reg |= LEVEL_TRIGGER << LEVEL_TRIG_OFF;
+		pin_reg &= ~(ACTIVE_LEVEL_MASK << ACTIVE_LEVEL_OFF);
+		pin_reg |= ACTIVE_LOW << ACTIVE_LEVEL_OFF;
+		irq_set_handler_locked(d, handle_level_irq);
+		break;
+
+	case IRQ_TYPE_NONE:
+		break;
+
+	default:
+		dev_err(&gpio_dev->pdev->dev, "Invalid type value\n");
+		ret = -EINVAL;
+	}
+
+	pin_reg |= CLR_INTR_STAT << INTERRUPT_STS_OFF;
+	mask = BIT(INTERRUPT_ENABLE_OFF);
+	pin_reg_irq_en = pin_reg;
+	pin_reg_irq_en |= mask;
+	pin_reg_irq_en &= ~BIT(INTERRUPT_MASK_OFF);
+	writel(pin_reg_irq_en, gpio_dev->base + hwirq * 4);
+	while ((readl(gpio_dev->base + hwirq * 4) & mask) != mask)
+		continue;
+	writel(pin_reg, gpio_dev->base + hwirq * 4);
+	raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
+
+	return ret;
 }
 
-static void setup_mock_irq_data(void)
-{
-	memset(&mock_irq_data, 0, sizeof(mock_irq_data));
-	mock_irq_data.hwirq = TEST_PIN_INDEX;
-}
+// Test helper macros
+#define TEST_HWIRQ 0
+#define REG_SIZE 4
 
+// Test cases
 static void test_amd_gpio_irq_set_type_edge_rising(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, IRQ_TYPE_EDGE_RISING);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
+
+	// Initial register value
+	writel(0xFFFFFFFF, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, IRQ_TYPE_EDGE_RISING);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	u32 reg_val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(LEVEL_TRIG_OFF), 0);
+	u32 reg_val = readl(gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+	KUNIT_EXPECT_EQ(test, reg_val & BIT(LEVEL_TRIG_OFF), 0U);
 	KUNIT_EXPECT_EQ(test, (reg_val >> ACTIVE_LEVEL_OFF) & ACTIVE_LEVEL_MASK, ACTIVE_HIGH);
 }
 
 static void test_amd_gpio_irq_set_type_edge_falling(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, IRQ_TYPE_EDGE_FALLING);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
+
+	writel(0xFFFFFFFF, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, IRQ_TYPE_EDGE_FALLING);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	u32 reg_val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(LEVEL_TRIG_OFF), 0);
+	u32 reg_val = readl(gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+	KUNIT_EXPECT_EQ(test, reg_val & BIT(LEVEL_TRIG_OFF), 0U);
 	KUNIT_EXPECT_EQ(test, (reg_val >> ACTIVE_LEVEL_OFF) & ACTIVE_LEVEL_MASK, ACTIVE_LOW);
 }
 
 static void test_amd_gpio_irq_set_type_edge_both(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, IRQ_TYPE_EDGE_BOTH);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
+
+	writel(0xFFFFFFFF, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, IRQ_TYPE_EDGE_BOTH);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	u32 reg_val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(LEVEL_TRIG_OFF), 0);
+	u32 reg_val = readl(gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+	KUNIT_EXPECT_EQ(test, reg_val & BIT(LEVEL_TRIG_OFF), 0U);
 	KUNIT_EXPECT_EQ(test, (reg_val >> ACTIVE_LEVEL_OFF) & ACTIVE_LEVEL_MASK, BOTH_EDGES);
 }
 
 static void test_amd_gpio_irq_set_type_level_high(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, IRQ_TYPE_LEVEL_HIGH);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
+
+	writel(0x0, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, IRQ_TYPE_LEVEL_HIGH);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	u32 reg_val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
-	KUNIT_EXPECT_NE(test, reg_val & BIT(LEVEL_TRIG_OFF), 0);
+	u32 reg_val = readl(gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+	KUNIT_EXPECT_NE(test, reg_val & BIT(LEVEL_TRIG_OFF), 0U);
 	KUNIT_EXPECT_EQ(test, (reg_val >> ACTIVE_LEVEL_OFF) & ACTIVE_LEVEL_MASK, ACTIVE_HIGH);
 }
 
 static void test_amd_gpio_irq_set_type_level_low(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, IRQ_TYPE_LEVEL_LOW);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
+
+	writel(0x0, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, IRQ_TYPE_LEVEL_LOW);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	u32 reg_val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
-	KUNIT_EXPECT_NE(test, reg_val & BIT(LEVEL_TRIG_OFF), 0);
+	u32 reg_val = readl(gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+	KUNIT_EXPECT_NE(test, reg_val & BIT(LEVEL_TRIG_OFF), 0U);
 	KUNIT_EXPECT_EQ(test, (reg_val >> ACTIVE_LEVEL_OFF) & ACTIVE_LEVEL_MASK, ACTIVE_LOW);
 }
 
 static void test_amd_gpio_irq_set_type_none(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, IRQ_TYPE_NONE);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
+
+	writel(0x12345678, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, IRQ_TYPE_NONE);
 	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	u32 reg_val = readl(gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+	KUNIT_EXPECT_EQ(test, reg_val, 0x12345678U | (CLR_INTR_STAT << INTERRUPT_STS_OFF));
 }
 
 static void test_amd_gpio_irq_set_type_invalid(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, 0xFF);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
+
+	writel(0x0, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, 0xFF); // Invalid type
 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
 }
 
-static void test_amd_gpio_irq_set_type_clear_interrupt_status(struct kunit *test)
+static void test_amd_gpio_irq_set_type_clear_interrupt_status_bit(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, IRQ_TYPE_EDGE_RISING);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
+
+	writel(0x0, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, IRQ_TYPE_EDGE_RISING);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	u32 reg_val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
-	KUNIT_EXPECT_EQ(test, (reg_val >> INTERRUPT_STS_OFF) & 0x1, CLR_INTR_STAT);
+	u32 reg_val = readl(gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+	KUNIT_EXPECT_NE(test, reg_val & (CLR_INTR_STAT << INTERRUPT_STS_OFF), 0U);
 }
 
 static void test_amd_gpio_irq_set_type_polling_enable_disable(struct kunit *test)
 {
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[REG_SIZE * 2] = {0};
+	struct gpio_chip gc = {};
+	struct irq_data d = {};
 	int ret;
-	setup_mock_gpio_dev();
-	setup_mock_irq_data();
 
-	mock_gc.private = &mock_gpio_dev;
-	mock_irq_data.chip_data = &mock_gc;
+	gpio_dev.base = (void __iomem *)mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gpio_dev.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev.pdev);
 
-	// Simulate hardware that immediately reflects the written value
-	writel(0x0, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+	d.hwirq = TEST_HWIRQ;
 
-	ret = amd_gpio_irq_set_type(&mock_irq_data, IRQ_TYPE_EDGE_RISING);
+	// Simulate polling behavior by pre-setting the expected final value
+	writel(0x0, gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+
+	ret = amd_gpio_irq_set_type(&d, IRQ_TYPE_EDGE_RISING);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	u32 reg_val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(INTERRUPT_ENABLE_OFF), 0);
-	KUNIT_EXPECT_NE(test, reg_val & BIT(INTERRUPT_MASK_OFF), 0);
+	// Final register value should have interrupt disabled but status cleared
+	u32 reg_val = readl(gpio_dev.base + TEST_HWIRQ * REG_SIZE);
+	KUNIT_EXPECT_EQ(test, reg_val & BIT(INTERRUPT_MASK_OFF), BIT(INTERRUPT_MASK_OFF));
+	KUNIT_EXPECT_NE(test, reg_val & (CLR_INTR_STAT << INTERRUPT_STS_OFF), 0U);
 }
 
 static struct kunit_case amd_gpio_irq_set_type_test_cases[] = {
@@ -182,7 +352,7 @@ static struct kunit_case amd_gpio_irq_set_type_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_irq_set_type_level_low),
 	KUNIT_CASE(test_amd_gpio_irq_set_type_none),
 	KUNIT_CASE(test_amd_gpio_irq_set_type_invalid),
-	KUNIT_CASE(test_amd_gpio_irq_set_type_clear_interrupt_status),
+	KUNIT_CASE(test_amd_gpio_irq_set_type_clear_interrupt_status_bit),
 	KUNIT_CASE(test_amd_gpio_irq_set_type_polling_enable_disable),
 	{}
 };

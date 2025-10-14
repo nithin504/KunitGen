@@ -1,15 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 
 static inline void amd_gpio_unregister_s2idle_ops(void) {}
 
-static void test_amd_gpio_unregister_s2idle_ops_normal(struct kunit *test)
+static void test_amd_gpio_unregister_s2idle_ops_basic(struct kunit *test)
 {
 	amd_gpio_unregister_s2idle_ops();
-	KUNIT_SUCCEED(test);
+	KUNIT_EXPECT_TRUE(test, true);
 }
 
 static struct kunit_case amd_gpio_unregister_s2idle_ops_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_unregister_s2idle_ops_normal),
+	KUNIT_CASE(test_amd_gpio_unregister_s2idle_ops_basic),
 	{}
 };
 

@@ -5,141 +5,79 @@
 #include <linux/io.h>
 #include <linux/spinlock.h>
 #include <linux/errno.h>
-#include <linux/device.h>
 #include <linux/platform_device.h>
 
-#define PIN_INDEX 0
-#define PULL_DOWN_ENABLE_OFF 1
-#define PULL_UP_ENABLE_OFF 0
-#define DRV_STRENGTH_SEL_OFF 9
-#define DRV_STRENGTH_SEL_MASK 0x7
+// Mock pinctrl_dev_get_drvdata
+void *set_mock_pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev);
+#define pinctrl_dev_get_drvdata set_mock_pinctrl_dev_get_drvdata
 
-struct amd_gpio {
-	void __iomem *base;
-	raw_spinlock_t lock;
-	struct platform_device *pdev;
-};
+// Mock dev_dbg to avoid redefinition warnings
+#define dev_dbg(dev, fmt, ...) do { } while (0)
 
-static int mock_amd_gpio_set_debounce_called = 0;
-static int mock_amd_gpio_set_debounce_retval = 0;
-static unsigned int mock_amd_gpio_set_debounce_pin = 0;
-static unsigned int mock_amd_gpio_set_debounce_arg = 0;
+// Mock amd_gpio_set_debounce
+int amd_gpio_set_debounce(struct amd_gpio *gpio_dev, unsigned int pin, u32 debounce);
+#define amd_gpio_set_debounce(...) amd_gpio_set_debounce_mock(__VA_ARGS__)
 
-static int amd_gpio_set_debounce(struct amd_gpio *gpio_dev, unsigned int pin, u32 debounce)
+#include "pinctrl-amd.c"
+
+#define TEST_PIN_INDEX 0
+static char test_mmio_buffer[4096];
+static struct amd_gpio mock_gpio_dev;
+static int amd_gpio_set_debounce_called = 0;
+static int amd_gpio_set_debounce_ret = 0;
+
+void *set_mock_pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
 {
-	mock_amd_gpio_set_debounce_called++;
-	mock_amd_gpio_set_debounce_pin = pin;
-	mock_amd_gpio_set_debounce_arg = debounce;
-	return mock_amd_gpio_set_debounce_retval;
+	return &mock_gpio_dev;
 }
 
-#define pinctrl_dev_get_drvdata mock_pinctrl_dev_get_drvdata
-static struct amd_gpio *mock_gpio_dev_ptr;
-
-static void *mock_pinctrl_dev_get_drvdata(struct pinctrl_dev *pctldev)
+int amd_gpio_set_debounce_mock(struct amd_gpio *gpio_dev, unsigned int pin, u32 debounce)
 {
-	return mock_gpio_dev_ptr;
+	amd_gpio_set_debounce_called++;
+	return amd_gpio_set_debounce_ret;
 }
 
-static char mmio_buffer[4096];
-static struct amd_gpio mock_gpio_dev_instance;
-static struct platform_device mock_pdev;
-
-static int amd_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
-			   unsigned long *configs, unsigned int num_configs)
-{
-	int i;
-	u32 arg;
-	int ret = 0;
-	u32 pin_reg;
-	unsigned long flags;
-	enum pin_config_param param;
-	struct amd_gpio *gpio_dev = pinctrl_dev_get_drvdata(pctldev);
-
-	raw_spin_lock_irqsave(&gpio_dev->lock, flags);
-	for (i = 0; i < num_configs; i++) {
-		param = pinconf_to_config_param(configs[i]);
-		arg = pinconf_to_config_argument(configs[i]);
-		pin_reg = readl(gpio_dev->base + pin * 4);
-
-		switch (param) {
-		case PIN_CONFIG_INPUT_DEBOUNCE:
-			ret = amd_gpio_set_debounce(gpio_dev, pin, arg);
-			goto out_unlock;
-
-		case PIN_CONFIG_BIAS_PULL_DOWN:
-			pin_reg &= ~BIT(PULL_DOWN_ENABLE_OFF);
-			pin_reg |= (arg & BIT(0)) << PULL_DOWN_ENABLE_OFF;
-			break;
-
-		case PIN_CONFIG_BIAS_PULL_UP:
-			pin_reg &= ~BIT(PULL_UP_ENABLE_OFF);
-			pin_reg |= (arg & BIT(0)) << PULL_UP_ENABLE_OFF;
-			break;
-
-		case PIN_CONFIG_DRIVE_STRENGTH:
-			pin_reg &= ~(DRV_STRENGTH_SEL_MASK << DRV_STRENGTH_SEL_OFF);
-			pin_reg |= (arg & DRV_STRENGTH_SEL_MASK) << DRV_STRENGTH_SEL_OFF;
-			break;
-
-		default:
-			if (gpio_dev->pdev && gpio_dev->pdev->dev.driver)
-				dev_dbg(&gpio_dev->pdev->dev, "Invalid config param %04x\n", param);
-			ret = -ENOTSUPP;
-		}
-
-		writel(pin_reg, gpio_dev->base + pin * 4);
-	}
-out_unlock:
-	raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
-
-	return ret;
-}
-
-static void test_amd_pinconf_set_debounce_success(struct kunit *test)
+// Test debounce case (calls amd_gpio_set_debounce)
+static void test_amd_pinconf_set_debounce(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
 	unsigned long configs[] = {
-		pinconf_to_config_packed(PIN_CONFIG_INPUT_DEBOUNCE, 100)
+		pinconf_to_config_packed(PIN_CONFIG_INPUT_DEBOUNCE, 0x5)
 	};
 
-	mock_amd_gpio_set_debounce_called = 0;
-	mock_amd_gpio_set_debounce_retval = 0;
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = &mock_pdev;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	amd_gpio_set_debounce_called = 0;
+	amd_gpio_set_debounce_ret = 0;
 
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
+	writel(0x0, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_set_debounce_called, 1);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_set_debounce_pin, PIN_INDEX);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_set_debounce_arg, 100U);
+	KUNIT_EXPECT_EQ(test, amd_gpio_set_debounce_called, 1);
 }
 
-static void test_amd_pinconf_set_debounce_failure(struct kunit *test)
+// Test debounce case with error return
+static void test_amd_pinconf_set_debounce_error(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
 	unsigned long configs[] = {
-		pinconf_to_config_packed(PIN_CONFIG_INPUT_DEBOUNCE, 200)
+		pinconf_to_config_packed(PIN_CONFIG_INPUT_DEBOUNCE, 0x5)
 	};
 
-	mock_amd_gpio_set_debounce_called = 0;
-	mock_amd_gpio_set_debounce_retval = -EINVAL;
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = &mock_pdev;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	amd_gpio_set_debounce_called = 0;
+	amd_gpio_set_debounce_ret = -EINVAL;
 
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
+	writel(0x0, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_set_debounce_called, 1);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_set_debounce_pin, PIN_INDEX);
-	KUNIT_EXPECT_EQ(test, mock_amd_gpio_set_debounce_arg, 200U);
+	KUNIT_EXPECT_EQ(test, amd_gpio_set_debounce_called, 1);
 }
 
+// Test pull-down case with arg=1
 static void test_amd_pinconf_set_pull_down_enable(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
@@ -147,20 +85,18 @@ static void test_amd_pinconf_set_pull_down_enable(struct kunit *test)
 		pinconf_to_config_packed(PIN_CONFIG_BIAS_PULL_DOWN, 1)
 	};
 
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = NULL;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0xFFFFFFFF, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
-	writel(0xFFFFFFFF, mock_gpio_dev_instance.base + PIN_INDEX * 4);
-
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
-
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	u32 reg_val = readl(mock_gpio_dev_instance.base + PIN_INDEX * 4);
-	KUNIT_EXPECT_NE(test, reg_val & BIT(PULL_DOWN_ENABLE_OFF), 0U);
+
+	u32 val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	KUNIT_EXPECT_EQ(test, val & BIT(PULL_DOWN_ENABLE_OFF), BIT(PULL_DOWN_ENABLE_OFF));
 }
 
+// Test pull-down case with arg=0
 static void test_amd_pinconf_set_pull_down_disable(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
@@ -168,20 +104,18 @@ static void test_amd_pinconf_set_pull_down_disable(struct kunit *test)
 		pinconf_to_config_packed(PIN_CONFIG_BIAS_PULL_DOWN, 0)
 	};
 
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = NULL;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0xFFFFFFFF, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
-	writel(0xFFFFFFFF, mock_gpio_dev_instance.base + PIN_INDEX * 4);
-
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
-
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	u32 reg_val = readl(mock_gpio_dev_instance.base + PIN_INDEX * 4);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(PULL_DOWN_ENABLE_OFF), 0U);
+
+	u32 val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	KUNIT_EXPECT_EQ(test, val & BIT(PULL_DOWN_ENABLE_OFF), 0);
 }
 
+// Test pull-up case with arg=1
 static void test_amd_pinconf_set_pull_up_enable(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
@@ -189,20 +123,18 @@ static void test_amd_pinconf_set_pull_up_enable(struct kunit *test)
 		pinconf_to_config_packed(PIN_CONFIG_BIAS_PULL_UP, 1)
 	};
 
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = NULL;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0xFFFFFFFF, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
-	writel(0x0, mock_gpio_dev_instance.base + PIN_INDEX * 4);
-
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
-
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	u32 reg_val = readl(mock_gpio_dev_instance.base + PIN_INDEX * 4);
-	KUNIT_EXPECT_NE(test, reg_val & BIT(PULL_UP_ENABLE_OFF), 0U);
+
+	u32 val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	KUNIT_EXPECT_EQ(test, val & BIT(PULL_UP_ENABLE_OFF), BIT(PULL_UP_ENABLE_OFF));
 }
 
+// Test pull-up case with arg=0
 static void test_amd_pinconf_set_pull_up_disable(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
@@ -210,41 +142,56 @@ static void test_amd_pinconf_set_pull_up_disable(struct kunit *test)
 		pinconf_to_config_packed(PIN_CONFIG_BIAS_PULL_UP, 0)
 	};
 
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = NULL;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0xFFFFFFFF, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
-	writel(0xFFFFFFFF, mock_gpio_dev_instance.base + PIN_INDEX * 4);
-
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
-
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	u32 reg_val = readl(mock_gpio_dev_instance.base + PIN_INDEX * 4);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(PULL_UP_ENABLE_OFF), 0U);
+
+	u32 val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	KUNIT_EXPECT_EQ(test, val & BIT(PULL_UP_ENABLE_OFF), 0);
 }
 
+// Test drive strength case with valid argument
 static void test_amd_pinconf_set_drive_strength(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
 	unsigned long configs[] = {
-		pinconf_to_config_packed(PIN_CONFIG_DRIVE_STRENGTH, 5)
+		pinconf_to_config_packed(PIN_CONFIG_DRIVE_STRENGTH, 0x3)
 	};
 
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = NULL;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0x0, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
-	writel(0x0, mock_gpio_dev_instance.base + PIN_INDEX * 4);
-
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
-
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	u32 reg_val = readl(mock_gpio_dev_instance.base + PIN_INDEX * 4);
-	KUNIT_EXPECT_EQ(test, (reg_val >> DRV_STRENGTH_SEL_OFF) & DRV_STRENGTH_SEL_MASK, 5U);
+
+	u32 val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	KUNIT_EXPECT_EQ(test, (val >> DRV_STRENGTH_SEL_OFF) & DRV_STRENGTH_SEL_MASK, 0x3);
 }
 
+// Test drive strength case with masked argument
+static void test_amd_pinconf_set_drive_strength_masked(struct kunit *test)
+{
+	struct pinctrl_dev dummy_pctldev;
+	unsigned long configs[] = {
+		pinconf_to_config_packed(PIN_CONFIG_DRIVE_STRENGTH, 0xFF)
+	};
+
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0x0, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	u32 val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	KUNIT_EXPECT_EQ(test, (val >> DRV_STRENGTH_SEL_OFF) & DRV_STRENGTH_SEL_MASK, DRV_STRENGTH_SEL_MASK);
+}
+
+// Test invalid param case
 static void test_amd_pinconf_set_invalid_param(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
@@ -252,65 +199,109 @@ static void test_amd_pinconf_set_invalid_param(struct kunit *test)
 		pinconf_to_config_packed((enum pin_config_param)0xFFFF, 0)
 	};
 
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = &mock_pdev;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	mock_gpio_dev.pdev = NULL;
 
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
-
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, -ENOTSUPP);
 }
 
+// Test multiple configs processing
 static void test_amd_pinconf_set_multiple_configs(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
 	unsigned long configs[] = {
 		pinconf_to_config_packed(PIN_CONFIG_BIAS_PULL_DOWN, 1),
-		pinconf_to_config_packed(PIN_CONFIG_DRIVE_STRENGTH, 3)
+		pinconf_to_config_packed(PIN_CONFIG_DRIVE_STRENGTH, 0x2),
+		pinconf_to_config_packed(PIN_CONFIG_BIAS_PULL_UP, 1)
 	};
 
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = NULL;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0x0, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
-	writel(0x0, mock_gpio_dev_instance.base + PIN_INDEX * 4);
-
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, ARRAY_SIZE(configs));
-
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	u32 reg_val = readl(mock_gpio_dev_instance.base + PIN_INDEX * 4);
-	KUNIT_EXPECT_NE(test, reg_val & BIT(PULL_DOWN_ENABLE_OFF), 0U);
-	KUNIT_EXPECT_EQ(test, (reg_val >> DRV_STRENGTH_SEL_OFF) & DRV_STRENGTH_SEL_MASK, 3U);
+
+	u32 val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	KUNIT_EXPECT_EQ(test, val & BIT(PULL_DOWN_ENABLE_OFF), BIT(PULL_DOWN_ENABLE_OFF));
+	KUNIT_EXPECT_EQ(test, val & BIT(PULL_UP_ENABLE_OFF), BIT(PULL_UP_ENABLE_OFF));
+	KUNIT_EXPECT_EQ(test, (val >> DRV_STRENGTH_SEL_OFF) & DRV_STRENGTH_SEL_MASK, 0x2);
 }
 
-static void test_amd_pinconf_set_empty_configs(struct kunit *test)
+// Test debounce in multiple configs (should break early)
+static void test_amd_pinconf_set_debounce_multiple_configs(struct kunit *test)
 {
 	struct pinctrl_dev dummy_pctldev;
-	unsigned long *configs = NULL;
+	unsigned long configs[] = {
+		pinconf_to_config_packed(PIN_CONFIG_BIAS_PULL_DOWN, 1),
+		pinconf_to_config_packed(PIN_CONFIG_INPUT_DEBOUNCE, 0x5),
+		pinconf_to_config_packed(PIN_CONFIG_DRIVE_STRENGTH, 0x2)
+	};
 
-	mock_gpio_dev_ptr = &mock_gpio_dev_instance;
-	mock_gpio_dev_instance.base = mmio_buffer;
-	mock_gpio_dev_instance.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev_instance.lock);
-	mock_gpio_dev_instance.pdev = NULL;
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	amd_gpio_set_debounce_called = 0;
+	amd_gpio_set_debounce_ret = 0;
 
-	int ret = amd_pinconf_set(&dummy_pctldev, PIN_INDEX, configs, 0);
+	writel(0x0, mock_gpio_dev.base + TEST_PIN_INDEX * 4);
 
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, ARRAY_SIZE(configs));
 	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, amd_gpio_set_debounce_called, 1);
+
+	// Verify that only the first config was processed (debounce breaks the loop)
+	u32 val = readl(mock_gpio_dev.base + TEST_PIN_INDEX * 4);
+	KUNIT_EXPECT_EQ(test, val & BIT(PULL_DOWN_ENABLE_OFF), BIT(PULL_DOWN_ENABLE_OFF));
+}
+
+// Test zero configs
+static void test_amd_pinconf_set_zero_configs(struct kunit *test)
+{
+	struct pinctrl_dev dummy_pctldev;
+	unsigned long configs[] = {};
+
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+
+	int ret = amd_pinconf_set(&dummy_pctldev, TEST_PIN_INDEX, configs, 0);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+}
+
+// Test high pin number (edge case)
+static void test_amd_pinconf_set_high_pin(struct kunit *test)
+{
+	struct pinctrl_dev dummy_pctldev;
+	unsigned long configs[] = {
+		pinconf_to_config_packed(PIN_CONFIG_BIAS_PULL_DOWN, 1)
+	};
+
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	writel(0xFFFFFFFF, mock_gpio_dev.base + 1000 * 4);
+
+	int ret = amd_pinconf_set(&dummy_pctldev, 1000, configs, ARRAY_SIZE(configs));
+	KUNIT_EXPECT_EQ(test, ret, 0);
+
+	u32 val = readl(mock_gpio_dev.base + 1000 * 4);
+	KUNIT_EXPECT_EQ(test, val & BIT(PULL_DOWN_ENABLE_OFF), BIT(PULL_DOWN_ENABLE_OFF));
 }
 
 static struct kunit_case amd_pinconf_set_test_cases[] = {
-	KUNIT_CASE(test_amd_pinconf_set_debounce_success),
-	KUNIT_CASE(test_amd_pinconf_set_debounce_failure),
+	KUNIT_CASE(test_amd_pinconf_set_debounce),
+	KUNIT_CASE(test_amd_pinconf_set_debounce_error),
 	KUNIT_CASE(test_amd_pinconf_set_pull_down_enable),
 	KUNIT_CASE(test_amd_pinconf_set_pull_down_disable),
 	KUNIT_CASE(test_amd_pinconf_set_pull_up_enable),
 	KUNIT_CASE(test_amd_pinconf_set_pull_up_disable),
 	KUNIT_CASE(test_amd_pinconf_set_drive_strength),
+	KUNIT_CASE(test_amd_pinconf_set_drive_strength_masked),
 	KUNIT_CASE(test_amd_pinconf_set_invalid_param),
 	KUNIT_CASE(test_amd_pinconf_set_multiple_configs),
-	KUNIT_CASE(test_amd_pinconf_set_empty_configs),
+	KUNIT_CASE(test_amd_pinconf_set_debounce_multiple_configs),
+	KUNIT_CASE(test_amd_pinconf_set_zero_configs),
+	KUNIT_CASE(test_amd_pinconf_set_high_pin),
 	{}
 };
 

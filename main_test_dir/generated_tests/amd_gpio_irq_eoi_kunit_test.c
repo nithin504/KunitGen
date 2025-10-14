@@ -11,7 +11,6 @@
 struct amd_gpio {
 	void __iomem *base;
 	raw_spinlock_t lock;
-	struct gpio_chip chip;
 };
 
 static void amd_gpio_irq_eoi(struct irq_data *d)
@@ -28,70 +27,62 @@ static void amd_gpio_irq_eoi(struct irq_data *d)
 	raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
 }
 
-static void test_amd_gpio_irq_eoi_sets_eoi_bit(struct kunit *test)
+static void *mock_irq_data_get_irq_chip_data(struct irq_data *d)
 {
-	struct amd_gpio *gpio_dev;
-	struct gpio_chip *gc;
-	struct irq_data irq_data;
-	char __iomem *mmio_base;
-	u32 reg_value;
-
-	gpio_dev = kunit_kzalloc(test, sizeof(*gpio_dev), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev);
-
-	mmio_base = kunit_kzalloc(test, 4096, GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, mmio_base);
-
-	gpio_dev->base = mmio_base;
-	raw_spin_lock_init(&gpio_dev->lock);
-
-	gc = &gpio_dev->chip;
-	gc->private = gpio_dev;
-
-	irq_data.chip_data = gc;
-
-	writel(0x0, gpio_dev->base + WAKE_INT_MASTER_REG);
-
-	amd_gpio_irq_eoi(&irq_data);
-
-	reg_value = readl(gpio_dev->base + WAKE_INT_MASTER_REG);
-	KUNIT_EXPECT_EQ(test, reg_value & EOI_MASK, EOI_MASK);
+	return d->chip_data;
 }
 
-static void test_amd_gpio_irq_eoi_preserves_other_bits(struct kunit *test)
+static void *mock_gpiochip_get_data(struct gpio_chip *gc)
 {
-	struct amd_gpio *gpio_dev;
-	struct gpio_chip *gc;
-	struct irq_data irq_data;
-	char __iomem *mmio_base;
-	u32 reg_value, expected_value;
+	return gc->private;
+}
 
-	gpio_dev = kunit_kzalloc(test, sizeof(*gpio_dev), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev);
+#define irq_data_get_irq_chip_data mock_irq_data_get_irq_chip_data
+#define gpiochip_get_data mock_gpiochip_get_data
 
-	mmio_base = kunit_kzalloc(test, 4096, GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, mmio_base);
+static char mmio_buffer[4096];
 
-	gpio_dev->base = mmio_base;
-	raw_spin_lock_init(&gpio_dev->lock);
+static void test_amd_gpio_irq_eoi_normal(struct kunit *test)
+{
+	struct irq_data d;
+	struct gpio_chip gc;
+	struct amd_gpio gpio_dev;
+	u32 *reg_addr = (u32 *)(mmio_buffer + WAKE_INT_MASTER_REG);
 
-	gc = &gpio_dev->chip;
-	gc->private = gpio_dev;
+	gpio_dev.base = mmio_buffer;
+	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
 
-	irq_data.chip_data = gc;
+	*reg_addr = 0x0;
 
-	writel(0xDEADBEEF, gpio_dev->base + WAKE_INT_MASTER_REG);
+	amd_gpio_irq_eoi(&d);
 
-	amd_gpio_irq_eoi(&irq_data);
+	KUNIT_EXPECT_EQ(test, *reg_addr & EOI_MASK, EOI_MASK);
+}
 
-	reg_value = readl(gpio_dev->base + WAKE_INT_MASTER_REG);
-	expected_value = 0xDEADBEEF | EOI_MASK;
-	KUNIT_EXPECT_EQ(test, reg_value, expected_value);
+static void test_amd_gpio_irq_eoi_preserve_other_bits(struct kunit *test)
+{
+	struct irq_data d;
+	struct gpio_chip gc;
+	struct amd_gpio gpio_dev;
+	u32 *reg_addr = (u32 *)(mmio_buffer + WAKE_INT_MASTER_REG);
+
+	gpio_dev.base = mmio_buffer;
+	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+
+	*reg_addr = 0xF0;
+
+	amd_gpio_irq_eoi(&d);
+
+	KUNIT_EXPECT_EQ(test, *reg_addr, 0xF1U);
 }
 
 static struct kunit_case amd_gpio_irq_eoi_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_irq_eoi_sets_eoi_bit),
-	KUNIT_CASE(test_amd_gpio_irq_eoi_preserves_other_bits),
+	KUNIT_CASE(test_amd_gpio_irq_eoi_normal),
+	KUNIT_CASE(test_amd_gpio_irq_eoi_preserve_other_bits),
 	{}
 };
 

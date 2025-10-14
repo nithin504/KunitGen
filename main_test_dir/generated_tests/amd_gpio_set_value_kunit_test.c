@@ -1,39 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/gpio/driver.h>
-#include <linux/io.h>
 #include <linux/spinlock.h>
+#include <linux/io.h>
 
-#define OUTPUT_VALUE_OFF 16
-#define BIT(x) (1U << (x))
-
-struct amd_gpio {
+static struct amd_gpio {
 	void __iomem *base;
 	raw_spinlock_t lock;
-};
+} mock_gpio_dev;
 
-static struct amd_gpio mock_gpio_dev;
-static char mmio_buffer[4096];
+static char test_mmio_buffer[4096];
 
-static struct amd_gpio *gpiochip_get_data(struct gpio_chip *gc)
-{
-	return &mock_gpio_dev;
-}
-
-static u32 readl_mock(void __iomem *addr)
-{
-	return *((volatile u32 *)addr);
-}
-
-static void writel_mock(u32 value, void __iomem *addr)
-{
-	*((volatile u32 *)addr) = value;
-}
-
-#define readl(addr) readl_mock(addr)
-#define writel(val, addr) writel_mock(val, addr)
-
-static int amd_gpio_set_value(struct gpio_chip *gc, unsigned int offset, int value)
+static int amd_gpio_set_value(struct gpio_chip *gc, unsigned int offset,
+			      int value)
 {
 	u32 pin_reg;
 	unsigned long flags;
@@ -54,84 +33,118 @@ static int amd_gpio_set_value(struct gpio_chip *gc, unsigned int offset, int val
 static void test_amd_gpio_set_value_high(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mmio_buffer + 4);
-	*reg_addr = 0x0;
-
-	mock_gpio_dev.base = mmio_buffer;
+	u32 initial_value = 0x0;
+	unsigned int offset = 1;
+	
+	mock_gpio_dev.base = test_mmio_buffer;
 	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
-
-	amd_gpio_set_value(&gc, 1, 1);
-
-	u32 reg_val = *reg_addr;
-	KUNIT_EXPECT_NE(test, reg_val & BIT(OUTPUT_VALUE_OFF), 0U);
+	
+	writel(initial_value, mock_gpio_dev.base + offset * 4);
+	
+	int ret = amd_gpio_set_value(&gc, offset, 1);
+	
+	u32 result = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, result & BIT(OUTPUT_VALUE_OFF), BIT(OUTPUT_VALUE_OFF));
 }
 
 static void test_amd_gpio_set_value_low(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mmio_buffer + 8);
-	*reg_addr = 0xFFFFFFFF;
-
-	mock_gpio_dev.base = mmio_buffer;
+	u32 initial_value = 0xFFFFFFFF;
+	unsigned int offset = 2;
+	
+	mock_gpio_dev.base = test_mmio_buffer;
 	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
-
-	amd_gpio_set_value(&gc, 2, 0);
-
-	u32 reg_val = *reg_addr;
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(OUTPUT_VALUE_OFF), 0U);
+	
+	writel(initial_value, mock_gpio_dev.base + offset * 4);
+	
+	int ret = amd_gpio_set_value(&gc, offset, 0);
+	
+	u32 result = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, result & BIT(OUTPUT_VALUE_OFF), 0);
 }
 
-static void test_amd_gpio_set_value_no_change_on_same_value_high(struct kunit *test)
+static void test_amd_gpio_set_value_zero_offset(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mmio_buffer + 12);
-	*reg_addr = BIT(OUTPUT_VALUE_OFF);
-
-	mock_gpio_dev.base = mmio_buffer;
+	u32 initial_value = 0x0;
+	unsigned int offset = 0;
+	
+	mock_gpio_dev.base = test_mmio_buffer;
 	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
-
-	amd_gpio_set_value(&gc, 3, 1);
-
-	u32 reg_val = *reg_addr;
-	KUNIT_EXPECT_EQ(test, reg_val, BIT(OUTPUT_VALUE_OFF));
+	
+	writel(initial_value, mock_gpio_dev.base + offset * 4);
+	
+	int ret = amd_gpio_set_value(&gc, offset, 1);
+	
+	u32 result = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, result & BIT(OUTPUT_VALUE_OFF), BIT(OUTPUT_VALUE_OFF));
 }
 
-static void test_amd_gpio_set_value_no_change_on_same_value_low(struct kunit *test)
+static void test_amd_gpio_set_value_max_offset(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mmio_buffer + 16);
-	*reg_addr = 0x0;
-
-	mock_gpio_dev.base = mmio_buffer;
+	u32 initial_value = 0x0;
+	unsigned int offset = (sizeof(test_mmio_buffer) / 4) - 1;
+	
+	mock_gpio_dev.base = test_mmio_buffer;
 	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
-
-	amd_gpio_set_value(&gc, 4, 0);
-
-	u32 reg_val = *reg_addr;
-	KUNIT_EXPECT_EQ(test, reg_val, 0U);
+	
+	writel(initial_value, mock_gpio_dev.base + offset * 4);
+	
+	int ret = amd_gpio_set_value(&gc, offset, 1);
+	
+	u32 result = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, result & BIT(OUTPUT_VALUE_OFF), BIT(OUTPUT_VALUE_OFF));
 }
 
-static void test_amd_gpio_set_value_offset_zero(struct kunit *test)
+static void test_amd_gpio_set_value_already_set(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)mmio_buffer;
-	*reg_addr = 0x0;
-
-	mock_gpio_dev.base = mmio_buffer;
+	u32 initial_value = BIT(OUTPUT_VALUE_OFF);
+	unsigned int offset = 3;
+	
+	mock_gpio_dev.base = test_mmio_buffer;
 	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	
+	writel(initial_value, mock_gpio_dev.base + offset * 4);
+	
+	int ret = amd_gpio_set_value(&gc, offset, 1);
+	
+	u32 result = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, result & BIT(OUTPUT_VALUE_OFF), BIT(OUTPUT_VALUE_OFF));
+}
 
-	amd_gpio_set_value(&gc, 0, 1);
-
-	u32 reg_val = *reg_addr;
-	KUNIT_EXPECT_NE(test, reg_val & BIT(OUTPUT_VALUE_OFF), 0U);
+static void test_amd_gpio_set_value_already_clear(struct kunit *test)
+{
+	struct gpio_chip gc;
+	u32 initial_value = 0x0;
+	unsigned int offset = 4;
+	
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	
+	writel(initial_value, mock_gpio_dev.base + offset * 4);
+	
+	int ret = amd_gpio_set_value(&gc, offset, 0);
+	
+	u32 result = readl(mock_gpio_dev.base + offset * 4);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, result & BIT(OUTPUT_VALUE_OFF), 0);
 }
 
 static struct kunit_case amd_gpio_set_value_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_set_value_high),
 	KUNIT_CASE(test_amd_gpio_set_value_low),
-	KUNIT_CASE(test_amd_gpio_set_value_no_change_on_same_value_high),
-	KUNIT_CASE(test_amd_gpio_set_value_no_change_on_same_value_low),
-	KUNIT_CASE(test_amd_gpio_set_value_offset_zero),
+	KUNIT_CASE(test_amd_gpio_set_value_zero_offset),
+	KUNIT_CASE(test_amd_gpio_set_value_max_offset),
+	KUNIT_CASE(test_amd_gpio_set_value_already_set),
+	KUNIT_CASE(test_amd_gpio_set_value_already_clear),
 	{}
 };
 

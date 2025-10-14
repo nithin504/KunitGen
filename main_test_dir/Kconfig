@@ -1,0 +1,23 @@
+config AMD_GET_GROUPS_KUNIT_TEST
+	bool "KUnit test for amd_get_groups_kunit_test"
+	depends on KUNIT
+	default n
+config AMD_PINCONF_SET_KUNIT_TEST
+	bool "KUnit test for amd_pinconf_set_kunit_test"
+	depends on KUNIT
+	default n
+
+config AMD_GPIO_SET_VALUE_KUNIT_TEST
+	bool "KUnit test for amd_gpio_set_value_kunit_test"
+	depends on KUNIT
+	default n
+
+config AMD_GPIO_GET_DIRECTION_KUNIT_TEST
+	bool "KUnit test for amd_gpio_get_direction_kunit_test"
+	depends on KUNIT
+	default n
+
+config AMD_GPIO_UNREGISTER_S2IDLE_OPS_KUNIT_TEST
+	bool "KUnit test for amd_gpio_unregister_s2idle_ops_kunit_test"
+	depends on KUNIT
+	default n

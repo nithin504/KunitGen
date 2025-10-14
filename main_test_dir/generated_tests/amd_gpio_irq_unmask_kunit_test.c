@@ -5,19 +5,12 @@
 #include <linux/gpio/driver.h>
 #include <linux/spinlock.h>
 
-#define INTERRUPT_MASK_OFF 25
-#define BIT(nr) (1UL << (nr))
+#define INTERRUPT_MASK_OFF 18
 
 struct amd_gpio {
 	void __iomem *base;
 	raw_spinlock_t lock;
-	struct gpio_chip chip;
 };
-
-static struct amd_gpio *gpiochip_get_data(struct gpio_chip *chip)
-{
-	return container_of(chip, struct amd_gpio, chip);
-}
 
 static void amd_gpio_irq_unmask(struct irq_data *d)
 {
@@ -34,39 +27,111 @@ static void amd_gpio_irq_unmask(struct irq_data *d)
 	raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
 }
 
-static char mmio_buffer[4096];
-
 static void test_amd_gpio_irq_unmask_normal(struct kunit *test)
 {
-	struct amd_gpio gpio_dev = {
-		.base = mmio_buffer,
-		.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock),
-	};
-	struct gpio_chip gc = {
-		.parent = NULL,
-	};
-	struct irq_data d = {
-		.chip_data = &gc,
-	};
+	struct irq_data d;
+	struct gpio_chip gc;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096] __aligned(4);
+	u32 initial_value = 0x12345678;
+	irq_hw_number_t hwirq = 5;
 
-	irq_hw_number_t hwirq = 2;
-	u32 expected_offset = hwirq * 4;
-	void __iomem *reg_addr = gpio_dev.base + expected_offset;
+	gpio_dev.base = mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
 
-	// Initialize register to known value
-	writel(0x0, reg_addr);
+	d.hwirq = hwirq;
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
 
-	// Override irqd_to_hwirq and irq_data_get_irq_chip_data via direct assignment
-	// Since we can't redefine macros, we simulate behavior through structure setup
+	/* Initialize register content */
+	writel(initial_value, gpio_dev.base + hwirq * 4);
 
 	amd_gpio_irq_unmask(&d);
 
-	u32 result = readl(reg_addr);
-	KUNIT_EXPECT_EQ(test, result, BIT(INTERRUPT_MASK_OFF));
+	u32 result = readl(gpio_dev.base + hwirq * 4);
+	KUNIT_EXPECT_EQ(test, result, initial_value | BIT(INTERRUPT_MASK_OFF));
+}
+
+static void test_amd_gpio_irq_unmask_zero_offset(struct kunit *test)
+{
+	struct irq_data d;
+	struct gpio_chip gc;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096] __aligned(4);
+	u32 initial_value = 0xABCDEF00;
+	irq_hw_number_t hwirq = 0;
+
+	gpio_dev.base = mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+
+	d.hwirq = hwirq;
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+
+	/* Initialize register content at offset 0 */
+	writel(initial_value, gpio_dev.base);
+
+	amd_gpio_irq_unmask(&d);
+
+	u32 result = readl(gpio_dev.base);
+	KUNIT_EXPECT_EQ(test, result, initial_value | BIT(INTERRUPT_MASK_OFF));
+}
+
+static void test_amd_gpio_irq_unmask_large_offset(struct kunit *test)
+{
+	struct irq_data d;
+	struct gpio_chip gc;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[8192] __aligned(4);
+	u32 initial_value = 0xF0F0F0F0;
+	irq_hw_number_t hwirq = 255; /* Large but within bounds */
+
+	gpio_dev.base = mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+
+	d.hwirq = hwirq;
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+
+	/* Initialize register content at large offset */
+	writel(initial_value, gpio_dev.base + hwirq * 4);
+
+	amd_gpio_irq_unmask(&d);
+
+	u32 result = readl(gpio_dev.base + hwirq * 4);
+	KUNIT_EXPECT_EQ(test, result, initial_value | BIT(INTERRUPT_MASK_OFF));
+}
+
+static void test_amd_gpio_irq_unmask_bit_already_set(struct kunit *test)
+{
+	struct irq_data d;
+	struct gpio_chip gc;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096] __aligned(4);
+	u32 initial_value = 0x12345678 | BIT(INTERRUPT_MASK_OFF);
+	irq_hw_number_t hwirq = 10;
+
+	gpio_dev.base = mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+
+	d.hwirq = hwirq;
+	gc.private = &gpio_dev;
+	d.chip_data = &gc;
+
+	/* Initialize register with bit already set */
+	writel(initial_value, gpio_dev.base + hwirq * 4);
+
+	amd_gpio_irq_unmask(&d);
+
+	u32 result = readl(gpio_dev.base + hwirq * 4);
+	KUNIT_EXPECT_EQ(test, result, initial_value);
 }
 
 static struct kunit_case amd_gpio_irq_unmask_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_irq_unmask_normal),
+	KUNIT_CASE(test_amd_gpio_irq_unmask_zero_offset),
+	KUNIT_CASE(test_amd_gpio_irq_unmask_large_offset),
+	KUNIT_CASE(test_amd_gpio_irq_unmask_bit_already_set),
 	{}
 };
 

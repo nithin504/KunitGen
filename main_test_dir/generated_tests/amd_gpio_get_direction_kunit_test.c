@@ -1,30 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include <linux/gpio/driver.h>
-#include <linux/io.h>
 #include <linux/spinlock.h>
+#include <linux/io.h>
 
-#define OUTPUT_ENABLE_OFF 23
-
-struct amd_gpio {
+static struct amd_gpio {
 	void __iomem *base;
 	raw_spinlock_t lock;
-};
+} mock_gpio_dev;
 
-static struct amd_gpio gpio_dev;
-static char mmio_buffer[4096];
-
-static struct amd_gpio *gpiochip_get_data(struct gpio_chip *gc)
-{
-	return &gpio_dev;
-}
-
-static u32 readl_mock(void __iomem *addr)
-{
-	return *((u32 *)addr);
-}
-
-#define readl(addr) readl_mock(addr)
+static char test_mmio_buffer[4096];
 
 static int amd_gpio_get_direction(struct gpio_chip *gc, unsigned offset)
 {
@@ -42,77 +27,92 @@ static int amd_gpio_get_direction(struct gpio_chip *gc, unsigned offset)
 	return GPIO_LINE_DIRECTION_IN;
 }
 
-static void test_amd_gpio_get_direction_output_enabled(struct kunit *test)
+static void test_amd_gpio_get_direction_output(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mmio_buffer + 4);
-	*reg_addr = BIT(OUTPUT_ENABLE_OFF);
+	unsigned int offset = 0;
+	u32 *reg;
 
-	gpio_dev.base = mmio_buffer;
-	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	
+	reg = (u32 *)(test_mmio_buffer + offset * 4);
+	*reg = BIT(OUTPUT_ENABLE_OFF);
 
-	int direction = amd_gpio_get_direction(&gc, 1);
-	KUNIT_EXPECT_EQ(test, direction, GPIO_LINE_DIRECTION_OUT);
+	int ret = amd_gpio_get_direction(&gc, offset);
+	KUNIT_EXPECT_EQ(test, ret, GPIO_LINE_DIRECTION_OUT);
 }
 
-static void test_amd_gpio_get_direction_input_disabled(struct kunit *test)
+static void test_amd_gpio_get_direction_input(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mmio_buffer + 8);
-	*reg_addr = 0;
+	unsigned int offset = 1;
+	u32 *reg;
 
-	gpio_dev.base = mmio_buffer;
-	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	
+	reg = (u32 *)(test_mmio_buffer + offset * 4);
+	*reg = 0;
 
-	int direction = amd_gpio_get_direction(&gc, 2);
-	KUNIT_EXPECT_EQ(test, direction, GPIO_LINE_DIRECTION_IN);
+	int ret = amd_gpio_get_direction(&gc, offset);
+	KUNIT_EXPECT_EQ(test, ret, GPIO_LINE_DIRECTION_IN);
 }
 
-static void test_amd_gpio_get_direction_zero_offset(struct kunit *test)
+static void test_amd_gpio_get_direction_output_enable_clear(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)mmio_buffer;
-	*reg_addr = BIT(OUTPUT_ENABLE_OFF);
+	unsigned int offset = 2;
+	u32 *reg;
 
-	gpio_dev.base = mmio_buffer;
-	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	
+	reg = (u32 *)(test_mmio_buffer + offset * 4);
+	*reg = ~BIT(OUTPUT_ENABLE_OFF);
 
-	int direction = amd_gpio_get_direction(&gc, 0);
-	KUNIT_EXPECT_EQ(test, direction, GPIO_LINE_DIRECTION_OUT);
+	int ret = amd_gpio_get_direction(&gc, offset);
+	KUNIT_EXPECT_EQ(test, ret, GPIO_LINE_DIRECTION_IN);
 }
 
-static void test_amd_gpio_get_direction_unaligned_bit_clear(struct kunit *test)
+static void test_amd_gpio_get_direction_multiple_bits_set(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mmio_buffer + 12);
-	*reg_addr = ~BIT(OUTPUT_ENABLE_OFF);
+	unsigned int offset = 3;
+	u32 *reg;
 
-	gpio_dev.base = mmio_buffer;
-	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	
+	reg = (u32 *)(test_mmio_buffer + offset * 4);
+	*reg = BIT(OUTPUT_ENABLE_OFF) | BIT(31) | BIT(15);
 
-	int direction = amd_gpio_get_direction(&gc, 3);
-	KUNIT_EXPECT_EQ(test, direction, GPIO_LINE_DIRECTION_IN);
+	int ret = amd_gpio_get_direction(&gc, offset);
+	KUNIT_EXPECT_EQ(test, ret, GPIO_LINE_DIRECTION_OUT);
 }
 
-static void test_amd_gpio_get_direction_unaligned_bit_set(struct kunit *test)
+static void test_amd_gpio_get_direction_max_offset(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mmio_buffer + 16);
-	*reg_addr = BIT(OUTPUT_ENABLE_OFF) | 0x12345678;
+	unsigned int offset = (sizeof(test_mmio_buffer) / 4) - 1;
+	u32 *reg;
 
-	gpio_dev.base = mmio_buffer;
-	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_gpio_dev.base = test_mmio_buffer;
+	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	
+	reg = (u32 *)(test_mmio_buffer + offset * 4);
+	*reg = BIT(OUTPUT_ENABLE_OFF);
 
-	int direction = amd_gpio_get_direction(&gc, 4);
-	KUNIT_EXPECT_EQ(test, direction, GPIO_LINE_DIRECTION_OUT);
+	int ret = amd_gpio_get_direction(&gc, offset);
+	KUNIT_EXPECT_EQ(test, ret, GPIO_LINE_DIRECTION_OUT);
 }
 
 static struct kunit_case amd_gpio_get_direction_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_get_direction_output_enabled),
-	KUNIT_CASE(test_amd_gpio_get_direction_input_disabled),
-	KUNIT_CASE(test_amd_gpio_get_direction_zero_offset),
-	KUNIT_CASE(test_amd_gpio_get_direction_unaligned_bit_clear),
-	KUNIT_CASE(test_amd_gpio_get_direction_unaligned_bit_set),
+	KUNIT_CASE(test_amd_gpio_get_direction_output),
+	KUNIT_CASE(test_amd_gpio_get_direction_input),
+	KUNIT_CASE(test_amd_gpio_get_direction_output_enable_clear),
+	KUNIT_CASE(test_amd_gpio_get_direction_multiple_bits_set),
+	KUNIT_CASE(test_amd_gpio_get_direction_max_offset),
 	{}
 };
 

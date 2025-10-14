@@ -14,78 +14,72 @@ static int do_amd_gpio_irq_handler(int irq, void *dev_id)
 	return mock_do_amd_gpio_irq_handler_result;
 }
 
-// Function under test
+// Include the function under test
 static irqreturn_t amd_gpio_irq_handler(int irq, void *dev_id)
 {
 	return IRQ_RETVAL(do_amd_gpio_irq_handler(irq, dev_id));
 }
 
-// Test case: amd_gpio_irq_handler returns IRQ_HANDLED when do_amd_gpio_irq_handler returns non-zero
-static void test_amd_gpio_irq_handler_handled(struct kunit *test)
-{
-	mock_do_amd_gpio_irq_handler_result = 1;
-	mock_do_amd_gpio_irq_handler_call_count = 0;
-
-	irqreturn_t ret = amd_gpio_irq_handler(42, NULL);
-
-	KUNIT_EXPECT_EQ(test, ret, IRQ_HANDLED);
-	KUNIT_EXPECT_EQ(test, mock_do_amd_gpio_irq_handler_call_count, 1);
-}
-
-// Test case: amd_gpio_irq_handler returns IRQ_NONE when do_amd_gpio_irq_handler returns zero
-static void test_amd_gpio_irq_handler_not_handled(struct kunit *test)
+// Test when do_amd_gpio_irq_handler returns 0 (IRQ_NONE)
+static void test_amd_gpio_irq_handler_returns_none(struct kunit *test)
 {
 	mock_do_amd_gpio_irq_handler_result = 0;
 	mock_do_amd_gpio_irq_handler_call_count = 0;
 
-	irqreturn_t ret = amd_gpio_irq_handler(42, NULL);
+	irqreturn_t result = amd_gpio_irq_handler(10, NULL);
 
-	KUNIT_EXPECT_EQ(test, ret, IRQ_NONE);
+	KUNIT_EXPECT_EQ(test, result, IRQ_NONE);
 	KUNIT_EXPECT_EQ(test, mock_do_amd_gpio_irq_handler_call_count, 1);
 }
 
-// Test case: amd_gpio_irq_handler handles negative irq values correctly
-static void test_amd_gpio_irq_handler_negative_irq(struct kunit *test)
+// Test when do_amd_gpio_irq_handler returns 1 (IRQ_HANDLED)
+static void test_amd_gpio_irq_handler_returns_handled(struct kunit *test)
 {
 	mock_do_amd_gpio_irq_handler_result = 1;
 	mock_do_amd_gpio_irq_handler_call_count = 0;
 
-	irqreturn_t ret = amd_gpio_irq_handler(-1, NULL);
+	irqreturn_t result = amd_gpio_irq_handler(20, (void *)0xDEADBEEF);
 
-	KUNIT_EXPECT_EQ(test, ret, IRQ_HANDLED);
+	KUNIT_EXPECT_EQ(test, result, IRQ_HANDLED);
 	KUNIT_EXPECT_EQ(test, mock_do_amd_gpio_irq_handler_call_count, 1);
 }
 
-// Test case: amd_gpio_irq_handler handles NULL dev_id correctly
-static void test_amd_gpio_irq_handler_null_dev_id(struct kunit *test)
+// Test with different irq values
+static void test_amd_gpio_irq_handler_various_irq_values(struct kunit *test)
 {
-	mock_do_amd_gpio_irq_handler_result = 0;
-	mock_do_amd_gpio_irq_handler_call_count = 0;
+	int irqs[] = {0, 1, -1, INT_MAX, INT_MIN};
+	for (int i = 0; i < ARRAY_SIZE(irqs); i++) {
+		mock_do_amd_gpio_irq_handler_result = (i % 2); // Alternate between 0 and 1
+		mock_do_amd_gpio_irq_handler_call_count = 0;
 
-	irqreturn_t ret = amd_gpio_irq_handler(0, NULL);
+		irqreturn_t result = amd_gpio_irq_handler(irqs[i], (void *)(unsigned long)irqs[i]);
 
-	KUNIT_EXPECT_EQ(test, ret, IRQ_NONE);
-	KUNIT_EXPECT_EQ(test, mock_do_amd_gpio_irq_handler_call_count, 1);
+		KUNIT_EXPECT_EQ(test, result, (irqreturn_t)(mock_do_amd_gpio_irq_handler_result ? IRQ_HANDLED : IRQ_NONE));
+		KUNIT_EXPECT_EQ(test, mock_do_amd_gpio_irq_handler_call_count, 1);
+	}
 }
 
-// Test case: amd_gpio_irq_handler handles maximum integer irq value
-static void test_amd_gpio_irq_handler_max_irq(struct kunit *test)
+// Test with various dev_id pointers
+static void test_amd_gpio_irq_handler_various_dev_ids(struct kunit *test)
 {
-	mock_do_amd_gpio_irq_handler_result = 1;
-	mock_do_amd_gpio_irq_handler_call_count = 0;
+	void *dev_ids[] = {NULL, (void *)0x1, (void *)0xFFFFFFFF, (void *)0xDEADBEEF};
+	
+	for (int i = 0; i < ARRAY_SIZE(dev_ids); i++) {
+		mock_do_amd_gpio_irq_handler_result = 1;
+		mock_do_amd_gpio_irq_handler_call_count = 0;
 
-	irqreturn_t ret = amd_gpio_irq_handler(INT_MAX, (void *)0xDEADBEEF);
+		irqreturn_t result = amd_gpio_irq_handler(0, dev_ids[i]);
 
-	KUNIT_EXPECT_EQ(test, ret, IRQ_HANDLED);
-	KUNIT_EXPECT_EQ(test, mock_do_amd_gpio_irq_handler_call_count, 1);
+		KUNIT_EXPECT_EQ(test, result, IRQ_HANDLED);
+		KUNIT_EXPECT_EQ(test, mock_do_amd_gpio_irq_handler_call_count, 1);
+	}
 }
 
 static struct kunit_case amd_gpio_irq_handler_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_irq_handler_handled),
-	KUNIT_CASE(test_amd_gpio_irq_handler_not_handled),
-	KUNIT_CASE(test_amd_gpio_irq_handler_negative_irq),
-	KUNIT_CASE(test_amd_gpio_irq_handler_null_dev_id),
-	KUNIT_CASE(test_amd_gpio_irq_handler_max_irq),
+	KUNIT_CASE(test_amd_gpio_irq_handler_returns_none),
+	KUNIT_CASE(test_amd_gpio_irq_handler_returns_handled),
+	KUNIT_CASE(test_amd_gpio_irq_handler_various_irq_values),
+	KUNIT_CASE(test_amd_gpio_irq_handler_various_dev_ids),
 	{}
 };
 

@@ -21,9 +21,10 @@ def main():
     main_test_dir = Path("main_test_dir")
     extracted_dir = Path("test_functions")
 
-    model_name = "qwen/qwen3-coder-480b-a35b-instruct"  # Free model on OpenRouter
+    #model_name = "qwen/qwen3-coder-480b-a35b-instruct"  # Free model on OpenRouter
+    model_name= "gemini-2.5-pro"
     temperature = 0.2
-   
+    """
     # --- Step 1: Fetch source code from GitHub ---
     try:
         source_code = fetch_github_raw_file(github_raw_url)
@@ -39,7 +40,7 @@ def main():
     except Exception as e:
         print(f"❌ Error during function extraction: {e}")
         return 
-    # --- Step 3: Generate KUnit tests ---
+    # --- Step 3: Generate KUnit tests ---"""
     try:
         generator = KUnitTestGenerator(
             main_test_dir=main_test_dir,

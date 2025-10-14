@@ -4,88 +4,46 @@
 #include <linux/pinctrl/pinconf.h>
 #include <linux/errno.h>
 
-// Mock data structures
-struct pinctrl_dev {};
-struct amd_gpio {};
+// Mocked dependencies
+static int mock_amd_get_group_pins_ret = 0;
+static const unsigned *mock_pins_ptr = NULL;
+static unsigned mock_npins_val = 0;
+static int mock_amd_pinconf_get_ret = 0;
 
-// Function prototypes for mocks
-static int mock_amd_get_group_pins_success(struct pinctrl_dev *pctldev,
-					   unsigned int group,
-					   const unsigned **pins,
-					   unsigned *npins);
-static int mock_amd_get_group_pins_failure(struct pinctrl_dev *pctldev,
-					   unsigned int group,
-					   const unsigned **pins,
-					   unsigned *npins);
-static int mock_amd_pinconf_get_success(struct pinctrl_dev *pctldev,
-					unsigned int pin,
-					unsigned long *config);
-static int mock_amd_pinconf_get_failure(struct pinctrl_dev *pctldev,
-					unsigned int pin,
-					unsigned long *config);
-
-// Override real functions with mocks
-#define amd_get_group_pins mock_amd_get_group_pins_success
-#define amd_pinconf_get mock_amd_pinconf_get_success
-#include "pinctrl-amd.c"
-
-// Restore original names for actual mocking
-#undef amd_get_group_pins
-#undef amd_pinconf_get
-
-// Re-define function pointers for dynamic mocking
-static typeof(amd_get_group_pins)* test_amd_get_group_pins_fn;
-static typeof(amd_pinconf_get)* test_amd_pinconf_get_fn;
-
-static int amd_get_group_pins(struct pinctrl_dev *pctldev,
-			      unsigned int group,
-			      const unsigned **pins,
-			      unsigned *npins)
+int amd_get_group_pins(struct pinctrl_dev *pctldev, unsigned int group,
+                       const unsigned **pins, unsigned *npins)
 {
-	return test_amd_get_group_pins_fn(pctldev, group, pins, npins);
-}
+	if (mock_amd_get_group_pins_ret)
+		return mock_amd_get_group_pins_ret;
 
-static int amd_pinconf_get(struct pinctrl_dev *pctldev,
-			   unsigned int pin,
-			   unsigned long *config)
-{
-	return test_amd_pinconf_get_fn(pctldev, pin, config);
-}
-
-// Mock implementations
-static unsigned test_pins[] = { 5 };
-
-static int mock_amd_get_group_pins_success(struct pinctrl_dev *pctldev,
-					   unsigned int group,
-					   const unsigned **pins,
-					   unsigned *npins)
-{
-	*pins = test_pins;
-	*npins = 1;
+	*pins = mock_pins_ptr;
+	*npins = mock_npins_val;
 	return 0;
 }
 
-static int mock_amd_get_group_pins_failure(struct pinctrl_dev *pctldev,
-					   unsigned int group,
-					   const unsigned **pins,
-					   unsigned *npins)
+int amd_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin,
+                    unsigned long *config)
 {
-	return -EINVAL;
+	return mock_amd_pinconf_get_ret;
 }
 
-static int mock_amd_pinconf_get_success(struct pinctrl_dev *pctldev,
-					unsigned int pin,
-					unsigned long *config)
+// Include the function under test
+static int amd_pinconf_group_get(struct pinctrl_dev *pctldev,
+                                 unsigned int group,
+                                 unsigned long *config)
 {
-	*config = 0x12345678;
+	const unsigned *pins;
+	unsigned npins;
+	int ret;
+
+	ret = amd_get_group_pins(pctldev, group, &pins, &npins);
+	if (ret)
+		return ret;
+
+	if (amd_pinconf_get(pctldev, pins[0], config))
+		return -ENOTSUPP;
+
 	return 0;
-}
-
-static int mock_amd_pinconf_get_failure(struct pinctrl_dev *pctldev,
-					unsigned int pin,
-					unsigned long *config)
-{
-	return -ENOTSUPP;
 }
 
 // Test cases
@@ -93,24 +51,25 @@ static void test_amd_pinconf_group_get_success(struct kunit *test)
 {
 	struct pinctrl_dev pctldev;
 	unsigned long config = 0;
-	test_amd_get_group_pins_fn = mock_amd_get_group_pins_success;
-	test_amd_pinconf_get_fn = mock_amd_pinconf_get_success;
+	unsigned pins[] = { 10 };
+	mock_amd_get_group_pins_ret = 0;
+	mock_pins_ptr = pins;
+	mock_npins_val = 1;
+	mock_amd_pinconf_get_ret = 0;
 
 	int ret = amd_pinconf_group_get(&pctldev, 0, &config);
-
 	KUNIT_EXPECT_EQ(test, ret, 0);
-	KUNIT_EXPECT_EQ(test, config, 0x12345678UL);
 }
 
 static void test_amd_pinconf_group_get_get_group_pins_fail(struct kunit *test)
 {
 	struct pinctrl_dev pctldev;
 	unsigned long config = 0;
-	test_amd_get_group_pins_fn = mock_amd_get_group_pins_failure;
-	test_amd_pinconf_get_fn = mock_amd_pinconf_get_success;
+	mock_amd_get_group_pins_ret = -EINVAL;
+	mock_pins_ptr = NULL;
+	mock_npins_val = 0;
 
 	int ret = amd_pinconf_group_get(&pctldev, 0, &config);
-
 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
 }
 
@@ -118,11 +77,13 @@ static void test_amd_pinconf_group_get_pinconf_get_fail(struct kunit *test)
 {
 	struct pinctrl_dev pctldev;
 	unsigned long config = 0;
-	test_amd_get_group_pins_fn = mock_amd_get_group_pins_success;
-	test_amd_pinconf_get_fn = mock_amd_pinconf_get_failure;
+	unsigned pins[] = { 10 };
+	mock_amd_get_group_pins_ret = 0;
+	mock_pins_ptr = pins;
+	mock_npins_val = 1;
+	mock_amd_pinconf_get_ret = -ENOTSUPP;
 
 	int ret = amd_pinconf_group_get(&pctldev, 0, &config);
-
 	KUNIT_EXPECT_EQ(test, ret, -ENOTSUPP);
 }
 

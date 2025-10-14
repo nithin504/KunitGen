@@ -6,26 +6,27 @@
 
 #define PIN_STS_OFF 0
 
+// Mocked AMD GPIO structure
 struct amd_gpio {
 	void __iomem *base;
 	raw_spinlock_t lock;
 };
 
-static struct amd_gpio mock_gpio_dev;
-static char mock_mmio_buffer[4096];
-
-static struct amd_gpio *gpiochip_get_data(struct gpio_chip *gc)
+// Mocked gpiochip_get_data
+static inline void *gpiochip_get_data(struct gpio_chip *gc)
 {
-	return &mock_gpio_dev;
+	return gc->private;
 }
 
-static u32 readl_mock(void __iomem *addr)
+// Mocked readl
+static u32 mock_readl_value = 0;
+static u32 __mock_readl(void __iomem *addr)
 {
-	return *((volatile u32 *)addr);
+	return mock_readl_value;
 }
+#define readl __mock_readl
 
-#define readl(addr) readl_mock(addr)
-
+// Include the function under test
 static int amd_gpio_get_value(struct gpio_chip *gc, unsigned offset)
 {
 	u32 pin_reg;
@@ -39,77 +40,88 @@ static int amd_gpio_get_value(struct gpio_chip *gc, unsigned offset)
 	return !!(pin_reg & BIT(PIN_STS_OFF));
 }
 
+// Test cases
 static void test_amd_gpio_get_value_pin_low(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mock_mmio_buffer + 4 * 1);
-	*reg_addr = 0x0;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096];
 
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	gc.private = &gpio_dev;
+	gpio_dev.base = mmio_buffer;
+	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_readl_value = 0x0;
 
-	int ret = amd_gpio_get_value(&gc, 1);
+	int ret = amd_gpio_get_value(&gc, 0);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static void test_amd_gpio_get_value_pin_high(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mock_mmio_buffer + 4 * 2);
-	*reg_addr = BIT(PIN_STS_OFF);
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096];
 
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
-
-	int ret = amd_gpio_get_value(&gc, 2);
-	KUNIT_EXPECT_EQ(test, ret, 1);
-}
-
-static void test_amd_gpio_get_value_offset_zero(struct kunit *test)
-{
-	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)mock_mmio_buffer;
-	*reg_addr = BIT(PIN_STS_OFF);
-
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	gc.private = &gpio_dev;
+	gpio_dev.base = mmio_buffer;
+	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_readl_value = BIT(PIN_STS_OFF);
 
 	int ret = amd_gpio_get_value(&gc, 0);
 	KUNIT_EXPECT_EQ(test, ret, 1);
 }
 
-static void test_amd_gpio_get_value_bit_not_set(struct kunit *test)
+static void test_amd_gpio_get_value_offset_nonzero(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mock_mmio_buffer + 4 * 3);
-	*reg_addr = 0xFFFFFFFF & ~BIT(PIN_STS_OFF);
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096];
 
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	gc.private = &gpio_dev;
+	gpio_dev.base = mmio_buffer;
+	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_readl_value = BIT(PIN_STS_OFF);
 
-	int ret = amd_gpio_get_value(&gc, 3);
+	int ret = amd_gpio_get_value(&gc, 5);
+	KUNIT_EXPECT_EQ(test, ret, 1);
+}
+
+static void test_amd_gpio_get_value_bit_not_set_but_other_bits(struct kunit *test)
+{
+	struct gpio_chip gc;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096];
+
+	gc.private = &gpio_dev;
+	gpio_dev.base = mmio_buffer;
+	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_readl_value = 0xFFFFFFFE;
+
+	int ret = amd_gpio_get_value(&gc, 0);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
-static void test_amd_gpio_get_value_with_other_bits_set(struct kunit *test)
+static void test_amd_gpio_get_value_bit_set_among_others(struct kunit *test)
 {
 	struct gpio_chip gc;
-	u32 *reg_addr = (u32 *)(mock_mmio_buffer + 4 * 4);
-	*reg_addr = BIT(PIN_STS_OFF) | 0xCAFEBABE;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096];
 
-	mock_gpio_dev.base = mock_mmio_buffer;
-	mock_gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gpio_dev.lock);
+	gc.private = &gpio_dev;
+	gpio_dev.base = mmio_buffer;
+	gpio_dev.lock = __RAW_SPIN_LOCK_UNLOCKED(gpio_dev.lock);
+	mock_readl_value = 0xFFFFFFFF;
 
-	int ret = amd_gpio_get_value(&gc, 4);
+	int ret = amd_gpio_get_value(&gc, 0);
 	KUNIT_EXPECT_EQ(test, ret, 1);
 }
 
 static struct kunit_case amd_gpio_get_value_test_cases[] = {
 	KUNIT_CASE(test_amd_gpio_get_value_pin_low),
 	KUNIT_CASE(test_amd_gpio_get_value_pin_high),
-	KUNIT_CASE(test_amd_gpio_get_value_offset_zero),
-	KUNIT_CASE(test_amd_gpio_get_value_bit_not_set),
-	KUNIT_CASE(test_amd_gpio_get_value_with_other_bits_set),
+	KUNIT_CASE(test_amd_gpio_get_value_offset_nonzero),
+	KUNIT_CASE(test_amd_gpio_get_value_bit_not_set_but_other_bits),
+	KUNIT_CASE(test_amd_gpio_get_value_bit_set_among_others),
 	{}
 };
 

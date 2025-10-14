@@ -4,7 +4,8 @@
 #include <linux/io.h>
 #include <linux/spinlock.h>
 
-#define OUTPUT_ENABLE_OFF 22
+#define OUTPUT_ENABLE_OFF 23
+#define BIT(x) (1U << (x))
 
 struct amd_gpio {
 	void __iomem *base;
@@ -31,93 +32,83 @@ static int amd_gpio_direction_input(struct gpio_chip *gc, unsigned offset)
 	return 0;
 }
 
-static void test_amd_gpio_direction_input_valid(struct kunit *test)
+static void test_amd_gpio_direction_input_normal(struct kunit *test)
 {
 	struct gpio_chip gc;
-	struct amd_gpio *gpio_dev;
-	char __iomem *base;
-	u32 reg_val;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096];
+	u32 initial_value = 0xFFFFFFFF;
+	u32 expected_value;
 
-	base = kunit_kzalloc(test, 4096, GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, base);
+	gpio_dev.base = mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gc.private = &gpio_dev;
 
-	gpio_dev = kunit_kzalloc(test, sizeof(*gpio_dev), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev);
+	/* Initialize register with all bits set */
+	writel(initial_value, gpio_dev.base + 4);
 
-	gpio_dev->base = base;
-	raw_spin_lock_init(&gpio_dev->lock);
-	gc.private = gpio_dev;
-
-	/* Set initial register value with OUTPUT_ENABLE bit set */
-	writel(0xFFFFFFFF, gpio_dev->base);
-
-	amd_gpio_direction_input(&gc, 0);
-
-	reg_val = readl(gpio_dev->base);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(OUTPUT_ENABLE_OFF), 0U);
-}
-
-static void test_amd_gpio_direction_input_offset_nonzero(struct kunit *test)
-{
-	struct gpio_chip gc;
-	struct amd_gpio *gpio_dev;
-	char __iomem *base;
-	u32 reg_val;
-
-	base = kunit_kzalloc(test, 4096, GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, base);
-
-	gpio_dev = kunit_kzalloc(test, sizeof(*gpio_dev), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev);
-
-	gpio_dev->base = base;
-	raw_spin_lock_init(&gpio_dev->lock);
-	gc.private = gpio_dev;
-
-	/* Initialize second pin register with OUTPUT_ENABLE bit set */
-	writel(0xFFFFFFFF, gpio_dev->base + 4);
-
+	/* Perform direction input operation on offset 1 */
 	amd_gpio_direction_input(&gc, 1);
 
-	reg_val = readl(gpio_dev->base + 4);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(OUTPUT_ENABLE_OFF), 0U);
+	/* Check that OUTPUT_ENABLE bit is cleared */
+	expected_value = initial_value & ~BIT(OUTPUT_ENABLE_OFF);
+	KUNIT_EXPECT_EQ(test, readl(gpio_dev.base + 4), expected_value);
 }
 
-static void test_amd_gpio_direction_input_already_disabled(struct kunit *test)
+static void test_amd_gpio_direction_input_zero_offset(struct kunit *test)
 {
 	struct gpio_chip gc;
-	struct amd_gpio *gpio_dev;
-	char __iomem *base;
-	u32 reg_val;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096];
+	u32 initial_value = 0x12345678;
+	u32 expected_value;
 
-	base = kunit_kzalloc(test, 4096, GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, base);
+	gpio_dev.base = mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gc.private = &gpio_dev;
 
-	gpio_dev = kunit_kzalloc(test, sizeof(*gpio_dev), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev);
+	/* Initialize register at offset 0 */
+	writel(initial_value, gpio_dev.base + 0);
 
-	gpio_dev->base = base;
-	raw_spin_lock_init(&gpio_dev->lock);
-	gc.private = gpio_dev;
-
-	/* Set initial register value with OUTPUT_ENABLE bit cleared */
-	writel(0x0, gpio_dev->base);
-
+	/* Perform direction input operation on offset 0 */
 	amd_gpio_direction_input(&gc, 0);
 
-	reg_val = readl(gpio_dev->base);
-	KUNIT_EXPECT_EQ(test, reg_val & BIT(OUTPUT_ENABLE_OFF), 0U);
+	/* Check that OUTPUT_ENABLE bit is cleared */
+	expected_value = initial_value & ~BIT(OUTPUT_ENABLE_OFF);
+	KUNIT_EXPECT_EQ(test, readl(gpio_dev.base + 0), expected_value);
+}
+
+static void test_amd_gpio_direction_input_output_bit_already_clear(struct kunit *test)
+{
+	struct gpio_chip gc;
+	struct amd_gpio gpio_dev;
+	char mmio_buffer[4096];
+	u32 initial_value = ~(BIT(OUTPUT_ENABLE_OFF)); /* OUTPUT_ENABLE already clear */
+	u32 expected_value = initial_value;
+
+	gpio_dev.base = mmio_buffer;
+	raw_spin_lock_init(&gpio_dev.lock);
+	gc.private = &gpio_dev;
+
+	/* Initialize register */
+	writel(initial_value, gpio_dev.base + 8);
+
+	/* Perform direction input operation */
+	amd_gpio_direction_input(&gc, 2);
+
+	/* Value should remain unchanged */
+	KUNIT_EXPECT_EQ(test, readl(gpio_dev.base + 8), expected_value);
 }
 
 static struct kunit_case amd_gpio_direction_input_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_direction_input_valid),
-	KUNIT_CASE(test_amd_gpio_direction_input_offset_nonzero),
-	KUNIT_CASE(test_amd_gpio_direction_input_already_disabled),
+	KUNIT_CASE(test_amd_gpio_direction_input_normal),
+	KUNIT_CASE(test_amd_gpio_direction_input_zero_offset),
+	KUNIT_CASE(test_amd_gpio_direction_input_output_bit_already_clear),
 	{}
 };
 
 static struct kunit_suite amd_gpio_direction_input_test_suite = {
-	.name = "amd_gpio_direction_input_test",
+	.name = "amd_gpio_direction_input",
 	.test_cases = amd_gpio_direction_input_test_cases,
 };
 
