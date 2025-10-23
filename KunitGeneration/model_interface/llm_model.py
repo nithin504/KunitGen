@@ -48,25 +48,21 @@ class KUnitTestGenerator:
         if not self.api_key:
             raise ValueError("NVIDIA_API_KEY environment variable not set.")
         
-        self.api_key=os.environ.get("GENAI_API_KEY")
-        if not self.api_key:
-           raise ValueError("GENAI_API_KEY environment variable not found")
+        
 
     def _initialize_client(self):
-        #return OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=self.api_key)
-        return  genai.Client(api_key=self.api_key)
+        return OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=self.api_key)
+        
     # ---------------- Model Query ----------------
     def _query_model(self, prompt: str) -> str:
-        try:"""
+        try:
             completion = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
-            response = completion.choices[0].message.content"""
-            completion = client.models.generate_content( model=self.model_name,contents=prompt)
-            respones=completion.text
+            response = completion.choices[0].message.content
             # Clean up model output from code fences
             return response.replace("```c", "").replace("```", "").strip()
         except Exception as e:
