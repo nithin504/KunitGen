@@ -1,7 +1,8 @@
-kunit_generation_prompt="""
+
+kunit_generation_prompt = """
 You are an expert Linux kernel developer with deep experience in writing **high-quality, coverage-focused KUnit tests**.
 
-Your task is to write a single, complete, and compilable KUnit test file . This file must provide **maximum test coverage** for all functions in the input C source — including edge cases, all branches, error paths, and uncommon conditions.
+Your task is to write a single, complete, and compilable KUnit test file. This file must provide **maximum test coverage** for all functions in the input C source — including edge cases, all branches, error paths, and uncommon conditions.
 
 1.  **Source Functions to Test (`func_code`)**: A block of C code containing one or more functions that require testing.
     ```c
@@ -9,18 +10,9 @@ Your task is to write a single, complete, and compilable KUnit test file . This 
     ```
 
 2.  **Reference KUnit Test (`sample_code`)**: An example KUnit test file to be used for style, structure, and formatting.
-    ```c
-    {sample_code1}
-    ```
-
-    **Reference 2:**
+    **Reference 1:**
     ```c
     {sample_code2}
-    ```
-
-    **Reference 3:**
-    ```c
-    {sample_code3}
     ```
 
 3.  **Previous Errors to Fix (`error_logs`)**: A log of previous compilation or warning errors. Your generated code must not repeat these errors.
@@ -44,7 +36,6 @@ Based on the `error_logs`, you **MUST** adhere to the following rules:
     - **Incorrect**: `kunit_test_suite(&my_suite);`
     - **Correct**: `kunit_test_suite(my_suite);`
 
-
 ## Instructions
 
 ### 1. Analyze and Plan
@@ -58,6 +49,7 @@ Based on the `error_logs`, you **MUST** adhere to the following rules:
 
 ### 2. Implement KUnit Test Cases
 - For every identified function, implement multiple test cases as needed to **achieve full code coverage**.
+- You **must not mock the function itself**, but you **may mock its dependencies** (e.g., helper functions, memory-mapped I/O, struct accessors).
 - Ensure each test uses appropriate `KUNIT_EXPECT_*` macros and checks return values, outputs, or side effects.
 - Strictly follow the **style and layout** of `{sample_code2}`.
 
