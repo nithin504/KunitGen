@@ -173,41 +173,53 @@ class KUnitTestGenerator:
         )
     
         subprocess.run(cmd, shell=True, cwd=kernel_dir)
+        # Check if log exists
+        if not self.error_log_file.exists():
+            print(f"❌ Log file not found: {self.error_log_file}")
+            return False
     
-        log_text = self.error_log_file.read_text(encoding="utf-8")
+        log_lines = self.error_log_file.read_text(encoding="utf-8").splitlines()
     
-        # ✅ Extract only unique compiler errors
-        error_lines = []
-        collecting = False
-        seen = set()  # to track unique error messages
-    
-        for line in log_text.splitlines():
-            # Match GCC/Clang-style error lines
-            match = re.search(r"error:|fatal error:", line, re.IGNORECASE)
-            if match:
-                clean_line = line.strip()
-                if clean_line not in seen:
-                    seen.add(clean_line)
-                    error_lines.append(clean_line)
-                    collecting = True
-            elif collecting:
-                # Capture code snippet or caret lines related to error
-                if line.strip() == "" or re.match(r"\s+\^", line):
-                    error_lines.append(line.strip())
+        seen = set()
+        error_blocks = []
+        i = 0
+        while i < len(log_lines):
+            line = log_lines[i]
+            # Match lines containing 'error:' or 'fatal error:'
+            if re.search(r"(error:|fatal error:)", line, re.IGNORECASE):
+                # Remove file path and line numbers
+                parts = line.split(':')
+                for j, p in enumerate(parts):
+                    if 'error' in p.lower():
+                        clean_error = ':'.join(parts[j:]).strip()
+                        break
                 else:
-                    collecting = False
+                    clean_error = line.strip()
     
-        # Combine into one clean text block
-        extracted_errors = "\n".join(error_lines) if error_lines else "No explicit error lines found."
+                if clean_error not in seen:
+                    seen.add(clean_error)
+                    # Capture next code line if it looks like code
+                    code_line = ""
+                    if i + 1 < len(log_lines):
+                        next_line = log_lines[i + 1]
+                        if re.match(r"\s+\S", next_line):
+                            code_line = next_line.rstrip()
+                    if code_line:
+                        error_blocks.append(f"{clean_error}\n{code_line}")
+                    else:
+                        error_blocks.append(clean_error)
+            i += 1
     
-        # Save to cleaned log file
+        extracted_errors = "\n\n".join(error_blocks) if error_blocks else "No explicit error lines found."
+    
+        # Save cleaned log
         extracted_log = self.error_log_file.parent / "clean_compile_errors.txt"
         extracted_log.write_text(extracted_errors, encoding="utf-8")
     
-        if "error" in log_text.lower() or "unfinished jobs" in log_text.lower():
-            print(f"❌ Compilation failed. Unique errors saved to '{extracted_log.name}'.")
+        if error_blocks:
+            print(f"❌ Compilation failed. {len(error_blocks)} unique errors saved to '{extracted_log.name}'.")
             return False
-            
+    
         print("✅ Compilation successful.")
         return True
 
