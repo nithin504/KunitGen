@@ -4,6 +4,7 @@ from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 from google import genai
+import re
 # Import your prompt template
 # Ensure this path is correct relative to where you run the script
 from KunitGeneration.model_interface.prompts.unittest_kunit_prompts import kunit_generation_prompt
@@ -156,29 +157,60 @@ class KUnitTestGenerator:
             with open(cfg_path, "a", encoding="utf-8") as f:
                 f.write("\n" + config_line + "\n")
             print(f"🧩 Enabled {config_line} in my_pinctrl.config.")
+            
+
+    
 
     def _compile_and_check(self) -> bool:
         """Compile using the kernel's make command and check for errors."""
         print("⚙️  Running kernel build to check for compilation errors...")
         
-        # NOTE: Hardcoded path to kernel source.
         kernel_dir = Path("/home/amd/linux")
-        #config_file = self.base_dir.parent / "my_pinctrl.config"
         cmd = (
             f"cp /home/amd/nithin/KunitGen/main_test_dir/generated_tests/*.c /home/amd/linux/drivers/pinctrl && "
-            f"./tools/testing/kunit/kunit.py run --kunitconfig=my_pinctrl.config --arch=x86_64 --raw_output > /home/amd/nithin/KunitGen/main_test_dir/compilation_log/compile_error.txt 2>&1"
+            f"./tools/testing/kunit/kunit.py run --kunitconfig=my_pinctrl.config --arch=x86_64 --raw_output > "
+            f"/home/amd/nithin/KunitGen/main_test_dir/compilation_log/compile_error.txt 2>&1"
         )
-
-        subprocess.run(cmd, shell=True,cwd=kernel_dir)
-
+    
+        subprocess.run(cmd, shell=True, cwd=kernel_dir)
+    
         log_text = self.error_log_file.read_text(encoding="utf-8")
-
+    
+        # ✅ Extract only unique compiler errors
+        error_lines = []
+        collecting = False
+        seen = set()  # to track unique error messages
+    
+        for line in log_text.splitlines():
+            # Match GCC/Clang-style error lines
+            match = re.search(r"error:|fatal error:", line, re.IGNORECASE)
+            if match:
+                clean_line = line.strip()
+                if clean_line not in seen:
+                    seen.add(clean_line)
+                    error_lines.append(clean_line)
+                    collecting = True
+            elif collecting:
+                # Capture code snippet or caret lines related to error
+                if line.strip() == "" or re.match(r"\s+\^", line):
+                    error_lines.append(line.strip())
+                else:
+                    collecting = False
+    
+        # Combine into one clean text block
+        extracted_errors = "\n".join(error_lines) if error_lines else "No explicit error lines found."
+    
+        # Save to cleaned log file
+        extracted_log = self.error_log_file.parent / "clean_compile_errors.txt"
+        extracted_log.write_text(extracted_errors, encoding="utf-8")
+    
         if "error" in log_text.lower() or "unfinished jobs" in log_text.lower():
-            print(f"❌ Compilation failed. Check '{self.error_log_file.name}'.")
+            print(f"❌ Compilation failed. Unique errors saved to '{extracted_log.name}'.")
             return False
             
         print("✅ Compilation successful.")
         return True
+
 
     # ---------------- Main Test Generation ----------------
     def generate_test_for_function(self, func_file_path: Path):
