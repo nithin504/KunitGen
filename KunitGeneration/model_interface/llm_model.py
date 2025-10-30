@@ -86,16 +86,32 @@ class KUnitTestGenerator:
 
     # ---------------- Kernel Build Integration ----------------
     def _update_makefile(self, test_name: str):
-        # NOTE: This assumes the Makefile is in the same directory as the test functions.
-        makefile_path = Path("/home/amd/linux/drivers/pinctrl/Makefile")
+        makefile_path = Path("/home/amd/linux/drivers/gpio/Makefile")
         if not makefile_path.exists():
             print(f"⚠️  No Makefile found at '{makefile_path}' — skipping Makefile update.")
             return
-            
+    
         config_name = test_name.upper()
         entry = f"obj-$(CONFIG_{config_name}) += {test_name}.o"
+    
         text = makefile_path.read_text(encoding="utf-8")
-        if entry not in text:
+    
+        # ✅ Fully escaped pattern for lines like: obj-$(CONFIG_XYZ) += xyz.o
+        pattern = re.compile(r'^(obj-\$\(\s*CONFIG_[A-Z0-9_]+\s*\)\s*\+=\s*\w+\.o)', re.MULTILINE)
+    
+        # Comment out matching lines
+        updated_text = re.sub(
+            pattern,
+            r'# \1  # commented by KUnitGen',
+            text
+        )
+    
+        if updated_text != text:
+            makefile_path.write_text(updated_text, encoding="utf-8")
+            print("📝 Commented previous Makefile entries.")
+    
+        # Add new entry only if not already present
+        if entry not in updated_text:
             with open(makefile_path, "a", encoding="utf-8") as f:
                 f.write("\n" + entry + "\n")
             print(f"🧩 Added to Makefile: {entry}")
@@ -105,7 +121,7 @@ class KUnitTestGenerator:
         Ensures the main kernel Kconfig sources the custom test Kconfig file,
         and adds the specific config entry for the given test to that file.
         """
-        main_kconfig_path = Path("/home/amd/linux/drivers/pinctrl/Kconfig")
+        main_kconfig_path = Path("/home/amd/linux/drivers/gpio/Kconfig")
         backup_path = main_kconfig_path.with_suffix(".KunitGen_backup")
         config_name = test_name.upper()
     
@@ -147,7 +163,7 @@ class KUnitTestGenerator:
 
         return True
     def _update_test_config(self, test_name: str):
-        cfg_path = Path("/home/amd/linux/my_pinctrl.config")
+        cfg_path = Path("/home/amd/linux/my_gpio.config")
         if not cfg_path.exists():
             print(f"⚠️  No my_pinctrl.config found at '{cfg_path}' — skipping.")
             return
@@ -167,8 +183,8 @@ class KUnitTestGenerator:
         
         kernel_dir = Path("/home/amd/linux")
         cmd = (
-            f"cp /home/amd/nithin/KunitGen/main_test_dir/generated_tests/*.c /home/amd/linux/drivers/pinctrl && "
-            f"./tools/testing/kunit/kunit.py run --kunitconfig=my_pinctrl.config --arch=x86_64 --raw_output > "
+            f"cp /home/amd/nithin/KunitGen/main_test_dir/generated_tests/*.c /home/amd/linux/drivers/gpio && "
+            f"./tools/testing/kunit/kunit.py run --kunitconfig=my_gpio.config --arch=x86_64 --raw_output > "
             f"/home/amd/nithin/KunitGen/main_test_dir/compilation_log/compile_error.txt 2>&1"
         )
     
