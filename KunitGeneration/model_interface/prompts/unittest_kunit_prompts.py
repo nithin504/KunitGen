@@ -24,8 +24,9 @@ Your task is to automatically generate a **complete, compilable KUnit test file*
 8. Register the suite with `kunit_test_suite(my_suite)`.
 9. Use `KUNIT_EXPECT_*` macros for assertions.
 10. Avoid duplicating any errors from `error_logs`.
-11. **Do NOT mock the functions being tested**. You may mock **dependencies** (helper functions, hardware calls, or internal struct accessors) if needed for compilation.
-
+11. Hit the unhit branches such that include the source file obtain code coverage.
+12. **Do NOT mock the functions being tested**. You may mock **dependencies** (helper functions, hardware calls, or internal struct accessors) if required using #define and cannot change the source file.
+13. add #include "gpio-amdpt.c" for each testcase
 ## Instructions
 
 - Analyze all functions in `source_code`.
