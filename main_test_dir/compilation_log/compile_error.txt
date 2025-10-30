@@ -1,12 +1,203 @@
-ERROR:root:Build interruption occurred. Cleaning console.
-ERROR:root:make[1]: Entering directory '/home/amd/linux/.kunit'
-  GEN     Makefile
-make[3]: *** [../scripts/kconfig/Makefile:85: olddefconfig] Interrupt
-make[2]: *** [/home/amd/linux/Makefile:735: olddefconfig] Interrupt
-make[1]: *** [/home/amd/linux/Makefile:248: __sub-make] Interrupt
-make: *** [Makefile:248: __sub-make] Interrupt
+ERROR:root:ld: vmlinux.o: in function `devm_gpiod_release':
+gpiolib-devres.c:(.text+0x2c80c5): undefined reference to `gpiod_put'
+ld: vmlinux.o: in function `devm_gpiod_release_array':
+gpiolib-devres.c:(.text+0x2c80e5): undefined reference to `gpiod_put_array'
+ld: vmlinux.o: in function `devm_gpio_chip_release':
+gpiolib-devres.c:(.text+0x2c8185): undefined reference to `gpiochip_remove'
+ld: vmlinux.o: in function `devm_gpiod_get_array':
+(.text+0x2c81ea): undefined reference to `gpiod_get_array'
+ld: (.text+0x2c821f): undefined reference to `gpiod_put_array'
+ld: vmlinux.o: in function `devm_fwnode_gpiod_get_index':
+(.text+0x2c824c): undefined reference to `gpiod_find_and_request'
+ld: (.text+0x2c8282): undefined reference to `gpiod_put'
+ld: vmlinux.o: in function `devm_gpiochip_add_data_with_key':
+(.text+0x2c82bd): undefined reference to `gpiochip_add_data_with_key'
+ld: (.text+0x2c82ea): undefined reference to `gpiochip_remove'
+ld: vmlinux.o: in function `devm_gpiod_get_index':
+(.text+0x2c831f): undefined reference to `gpiod_get_index'
+ld: (.text+0x2c8370): undefined reference to `gpiod_put'
+ld: vmlinux.o: in function `devm_gpiod_get_array_optional':
+(.text+0x2c842a): undefined reference to `gpiod_get_array'
+ld: (.text+0x2c845f): undefined reference to `gpiod_put_array'
+ld: vmlinux.o: in function `gpio_free':
+(.text+0x2c84a5): undefined reference to `gpio_to_desc'
+ld: (.text+0x2c84ad): undefined reference to `gpiod_free'
+ld: vmlinux.o: in function `gpio_request':
+(.text+0x2c84d9): undefined reference to `gpio_to_desc'
+ld: (.text+0x2c84ea): undefined reference to `gpiod_request'
+ld: vmlinux.o: in function `gpio_request_one':
+(.text+0x2c8523): undefined reference to `gpio_to_desc'
+ld: (.text+0x2c8536): undefined reference to `gpiod_request'
+ld: (.text+0x2c8551): undefined reference to `gpiod_direction_output_raw'
+ld: (.text+0x2c856a): undefined reference to `gpiod_direction_input'
+ld: (.text+0x2c857a): undefined reference to `gpiod_free'
+ld: vmlinux.o: in function `devm_gpio_release':
+gpiolib-legacy.c:(.text+0x2c8667): undefined reference to `gpio_to_desc'
+ld: gpiolib-legacy.c:(.text+0x2c866f): undefined reference to `gpiod_free'
+ld: vmlinux.o: in function `devm_gpio_request':
+(.text+0x2c86d1): undefined reference to `gpio_to_desc'
+ld: (.text+0x2c86e1): undefined reference to `gpiod_request'
+ld: vmlinux.o: in function `linehandle_set_config':
+gpiolib-cdev.c:(.text+0x2c8c70): undefined reference to `gpiod_direction_output_nonotify'
+ld: gpiolib-cdev.c:(.text+0x2c8c85): undefined reference to `gpiod_line_state_notify'
+ld: gpiolib-cdev.c:(.text+0x2c8cad): undefined reference to `gpiod_direction_input_nonotify'
+ld: vmlinux.o: in function `lineevent_irq_thread':
+gpiolib-cdev.c:(.text+0x2c8dca): undefined reference to `gpiod_get_value_cansleep'
+ld: vmlinux.o: in function `lineevent_free':
+gpiolib-cdev.c:(.text+0x2c8e3f): undefined reference to `gpiod_free'
+ld: gpiolib-cdev.c:(.text+0x2c8e50): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `edge_irq_thread':
+gpiolib-cdev.c:(.text+0x2c910e): undefined reference to `gpiod_get_value_cansleep'
+ld: vmlinux.o: in function `debounce_work_func':
+gpiolib-cdev.c:(.text+0x2c9206): undefined reference to `gpiod_get_raw_value_cansleep'
+ld: vmlinux.o: in function `linehandle_create':
+gpiolib-cdev.c:(.text+0x2c9408): undefined reference to `gpio_device_get'
+ld: gpiolib-cdev.c:(.text+0x2c945b): undefined reference to `gpiod_line_state_notify'
+ld: gpiolib-cdev.c:(.text+0x2c9476): undefined reference to `gpio_device_get_desc'
+ld: gpiolib-cdev.c:(.text+0x2c9492): undefined reference to `gpiod_request'
+ld: gpiolib-cdev.c:(.text+0x2c94c0): undefined reference to `gpiod_set_transitory'
+ld: gpiolib-cdev.c:(.text+0x2c94e7): undefined reference to `gpiod_direction_output_nonotify'
+ld: gpiolib-cdev.c:(.text+0x2c94fd): undefined reference to `gpiod_direction_input_nonotify'
+ld: gpiolib-cdev.c:(.text+0x2c9536): undefined reference to `gpiod_free'
+ld: gpiolib-cdev.c:(.text+0x2c9557): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `gpio_desc_to_lineinfo.isra.0':
+gpiolib-cdev.c:(.text+0x2c9727): undefined reference to `gpiod_get_label'
+ld: gpiolib-cdev.c:(.text+0x2c98bb): undefined reference to `gpiochip_line_is_valid'
+ld: vmlinux.o: in function `lineinfo_get':
+gpiolib-cdev.c:(.text+0x2c9980): undefined reference to `gpio_device_get_desc'
+ld: vmlinux.o: in function `lineinfo_get_v1':
+gpiolib-cdev.c:(.text+0x2c9ac4): undefined reference to `gpio_device_get_desc'
+ld: vmlinux.o: in function `lineinfo_changed_notify':
+gpiolib-cdev.c:(.text+0x2c9c47): undefined reference to `gpio_device_get'
+ld: vmlinux.o: in function `gpio_chrdev_release':
+gpiolib-cdev.c:(.text+0x2c9f09): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `linehandle_release':
+gpiolib-cdev.c:(.text+0x2c9f61): undefined reference to `gpiod_free'
+ld: gpiolib-cdev.c:(.text+0x2c9f7f): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `edge_detector_setup':
+gpiolib-cdev.c:(.text+0x2ca065): undefined reference to `gpio_do_set_config'
+ld: gpiolib-cdev.c:(.text+0x2ca085): undefined reference to `gpiod_get_raw_value_cansleep'
+ld: gpiolib-cdev.c:(.text+0x2ca099): undefined reference to `gpiod_to_irq'
+ld: gpiolib-cdev.c:(.text+0x2ca190): undefined reference to `gpiod_to_irq'
+ld: gpiolib-cdev.c:(.text+0x2ca267): undefined reference to `gpio_do_set_config'
+ld: vmlinux.o: in function `linereq_free':
+gpiolib-cdev.c:(.text+0x2ca37e): undefined reference to `gpiod_free'
+ld: gpiolib-cdev.c:(.text+0x2ca3ee): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `linereq_create':
+gpiolib-cdev.c:(.text+0x2ca516): undefined reference to `gpio_device_get'
+ld: gpiolib-cdev.c:(.text+0x2ca650): undefined reference to `gpio_device_get_desc'
+ld: gpiolib-cdev.c:(.text+0x2ca66b): undefined reference to `gpiod_request'
+ld: gpiolib-cdev.c:(.text+0x2ca6f6): undefined reference to `gpiod_set_transitory'
+ld: gpiolib-cdev.c:(.text+0x2ca73e): undefined reference to `gpiod_line_state_notify'
+ld: gpiolib-cdev.c:(.text+0x2ca82f): undefined reference to `gpiod_direction_output_nonotify'
+ld: gpiolib-cdev.c:(.text+0x2ca850): undefined reference to `gpiod_direction_input_nonotify'
+ld: vmlinux.o: in function `lineevent_ioctl':
+gpiolib-cdev.c:(.text+0x2caab2): undefined reference to `gpiod_get_value_cansleep'
+ld: vmlinux.o: in function `linereq_set_config':
+gpiolib-cdev.c:(.text+0x2cafa9): undefined reference to `gpiod_direction_output_nonotify'
+ld: gpiolib-cdev.c:(.text+0x2cafd3): undefined reference to `gpiod_line_state_notify'
+ld: gpiolib-cdev.c:(.text+0x2cb024): undefined reference to `gpiod_direction_input_nonotify'
+ld: vmlinux.o: in function `gpio_ioctl':
+gpiolib-cdev.c:(.text+0x2cbb49): undefined reference to `gpio_device_get_desc'
+ld: gpiolib-cdev.c:(.text+0x2cbbef): undefined reference to `gpio_device_get'
+ld: gpiolib-cdev.c:(.text+0x2cbc07): undefined reference to `gpiod_request'
+ld: gpiolib-cdev.c:(.text+0x2cbc3c): undefined reference to `gpiod_direction_input'
+ld: gpiolib-cdev.c:(.text+0x2cbc90): undefined reference to `gpiod_line_state_notify'
+ld: gpiolib-cdev.c:(.text+0x2cbc99): undefined reference to `gpiod_to_irq'
+ld: vmlinux.o: in function `gpio_chrdev_open':
+gpiolib-cdev.c:(.text+0x2cbf84): undefined reference to `gpio_device_get'
+ld: gpiolib-cdev.c:(.text+0x2cbff9): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `linehandle_ioctl':
+gpiolib-cdev.c:(.text+0x2cc52c): undefined reference to `gpiod_get_array_value_complex'
+ld: gpiolib-cdev.c:(.text+0x2cc608): undefined reference to `gpiod_set_array_value_complex'
+ld: vmlinux.o: in function `lineinfo_changed_func':
+gpiolib-cdev.c:(.text+0x2cc706): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `linereq_ioctl':
+gpiolib-cdev.c:(.text+0x2cc92c): undefined reference to `gpiod_get_array_value_complex'
+ld: gpiolib-cdev.c:(.text+0x2ccb21): undefined reference to `gpiod_set_array_value_complex'
+ld: gpiolib-cdev.c:(.text+0x2ccb5d): undefined reference to `gpiod_get_array_value_complex'
+ld: gpiolib-cdev.c:(.text+0x2ccbe0): undefined reference to `gpiod_set_array_value_complex'
+ld: vmlinux.o: in function `acpi_gpiochip_free_interrupts':
+(.text+0x2ccffe): undefined reference to `gpiochip_unlock_as_irq'
+ld: (.text+0x2cd007): undefined reference to `gpiochip_free_own_desc'
+ld: vmlinux.o: in function `acpi_populate_gpio_lookup':
+gpiolib-acpi-core.c:(.text+0x2cd33c): undefined reference to `gpio_to_desc'
+ld: gpiolib-acpi-core.c:(.text+0x2cd44b): undefined reference to `gpio_device_find'
+ld: gpiolib-acpi-core.c:(.text+0x2cd463): undefined reference to `gpio_device_get_desc'
+ld: gpiolib-acpi-core.c:(.text+0x2cd47c): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `acpi_gpiochip_request_irq.isra.0':
+gpiolib-acpi-core.c:(.text+0x2cd5c4): undefined reference to `gpiod_get_raw_value_cansleep'
+ld: vmlinux.o: in function `acpi_request_own_gpiod':
+gpiolib-acpi-core.c:(.text+0x2cd80d): undefined reference to `gpiochip_request_own_desc'
+ld: gpiolib-acpi-core.c:(.text+0x2cd829): undefined reference to `gpio_set_debounce_timeout'
+ld: vmlinux.o: in function `acpi_gpio_adr_space_handler':
+gpiolib-acpi-core.c:(.text+0x2cd996): undefined reference to `gpiod_get_raw_value_cansleep'
+ld: gpiolib-acpi-core.c:(.text+0x2cda9d): undefined reference to `gpiod_set_raw_value_cansleep'
+ld: gpiolib-acpi-core.c:(.text+0x2cdb30): undefined reference to `gpiochip_free_own_desc'
+ld: vmlinux.o: in function `acpi_gpiochip_alloc_event':
+gpiolib-acpi-core.c:(.text+0x2cdca5): undefined reference to `gpiochip_lock_as_irq'
+ld: gpiolib-acpi-core.c:(.text+0x2cdcb5): undefined reference to `gpiod_to_irq'
+ld: gpiolib-acpi-core.c:(.text+0x2cddd2): undefined reference to `gpiochip_free_own_desc'
+ld: gpiolib-acpi-core.c:(.text+0x2cde4e): undefined reference to `gpiochip_unlock_as_irq'
+ld: vmlinux.o: in function `__acpi_find_gpio':
+gpiolib-acpi-core.c:(.text+0x2cdec7): undefined reference to `gpio_suffixes'
+ld: gpiolib-acpi-core.c:(.text+0x2cdef0): undefined reference to `gpio_suffixes'
+ld: vmlinux.o: in function `acpi_dev_gpio_irq_wake_get_by':
+(.text+0x2ce1da): undefined reference to `gpiod_to_irq'
+ld: (.text+0x2ce265): undefined reference to `gpiod_set_consumer_name'
+ld: (.text+0x2ce281): undefined reference to `gpiod_configure_flags'
+ld: (.text+0x2ce29a): undefined reference to `gpio_set_debounce_timeout'
+ld: vmlinux.o: in function `acpi_gpiochip_add':
+(.text+0x2ce5ef): undefined reference to `gpiochip_get_desc'
+ld: (.text+0x2ce64f): undefined reference to `gpiod_hog'
+ld: vmlinux.o: in function `acpi_gpiochip_remove':
+(.text+0x2ce92c): undefined reference to `gpiochip_free_own_desc'
+ld: vmlinux.o: in function `acpi_gpio_count':
+(.text+0x2cea04): undefined reference to `gpio_suffixes'
+ld: (.text+0x2cea44): undefined reference to `gpio_suffixes'
+ld: (.text+0x2cec0c): undefined reference to `gpio_suffixes'
+ld: vmlinux.o: in function `swnode_find_gpio':
+(.text+0x2cef34): undefined reference to `gpio_suffixes'
+ld: (.text+0x2cef3b): undefined reference to `gpio_suffixes'
+ld: (.text+0x2cf006): undefined reference to `gpio_device_find_by_label'
+ld: (.text+0x2cf046): undefined reference to `gpio_device_get_desc'
+ld: (.text+0x2cf059): undefined reference to `gpio_device_put'
+ld: vmlinux.o: in function `swnode_gpio_count':
+(.text+0x2cf113): undefined reference to `gpio_suffixes'
+ld: (.text+0x2cf128): undefined reference to `gpio_suffixes'
+ld: vmlinux.o: in function `bgpio_request':
+gpio-mmio.c:(.text+0x2cf970): undefined reference to `gpiochip_generic_request'
+ld: vmlinux.o: in function `bgpio_init':
+(.text+0x2cfdec): undefined reference to `gpiochip_get_ngpios'
+ld: (.text+0x2cff48): undefined reference to `gpiochip_generic_free'
+ld: vmlinux.o: in function `pt_gpio_free':
+gpio-amdpt.c:(.text+0x2d0338): undefined reference to `gpiochip_get_data'
+ld: vmlinux.o: in function `pt_gpio_request':
+gpio-amdpt.c:(.text+0x2d03ae): undefined reference to `gpiochip_get_data'
+ld: vmlinux.o: in function `uart_rs485_config.isra.0':
+serial_core.c:(.text+0x348e30): undefined reference to `gpiod_set_value_cansleep'
+ld: serial_core.c:(.text+0x348e4e): undefined reference to `gpiod_set_value_cansleep'
+ld: serial_core.c:(.text+0x348ee2): undefined reference to `gpiod_set_value_cansleep'
+ld: serial_core.c:(.text+0x348ef6): undefined reference to `gpiod_set_value_cansleep'
+ld: vmlinux.o: in function `uart_ioctl':
+serial_core.c:(.text+0x34aeed): undefined reference to `gpiod_set_value_cansleep'
+ld: vmlinux.o:serial_core.c:(.text+0x34af09): more undefined references to `gpiod_set_value_cansleep' follow
+ld: vmlinux.o: in function `mctrl_gpio_set':
+(.text+0x3564e2): undefined reference to `gpiod_set_array_value'
+ld: vmlinux.o: in function `mctrl_gpio_init':
+(.text+0x356650): undefined reference to `gpiod_to_irq'
+ld: vmlinux.o: in function `mctrl_gpio_get':
+(.text+0x356766): undefined reference to `gpiod_get_value'
+ld: vmlinux.o: in function `mctrl_gpio_get_outputs':
+(.text+0x3567e6): undefined reference to `gpiod_get_value'
+make[3]: *** [../scripts/Makefile.vmlinux:91: vmlinux.unstripped] Error 1
+make[2]: *** [/home/amd/linux/Makefile:1236: vmlinux] Error 2
+make[1]: *** [/home/amd/linux/Makefile:248: __sub-make] Error 2
+make: *** [Makefile:248: __sub-make] Error 2
 
-[20:40:23] Configuring KUnit Kernel ...
-[20:40:23] Building KUnit Kernel ...
+[15:07:31] Configuring KUnit Kernel ...
+[15:07:31] Building KUnit Kernel ...
 Populating config with:
 $ make ARCH=x86_64 O=.kunit olddefconfig
+Building with:
+$ make all compile_commands.json scripts_gdb ARCH=x86_64 O=.kunit --jobs=4

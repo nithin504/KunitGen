@@ -1,0 +1,1 @@
+ERROR:root:ld: vmlinux.o: in function `devm_gpiod_release':

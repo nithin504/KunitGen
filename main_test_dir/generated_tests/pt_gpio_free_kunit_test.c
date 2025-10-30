@@ -1,7 +1,7 @@
 #include <kunit/test.h>
 #include <linux/io.h>
 #include <linux/gpio/driver.h>
-#include "pinctrl-amd.c"
+#include "gpio-amdpt.c"
 
 #define MOCK_BASE_ADDR 0x1000
 #define INTERNAL_GPIO0_DEBOUNCE 0x2
@@ -12,33 +12,29 @@
 #define DB_CNTRL_MASK 0x7
 
 // Mock register offsets (these would normally come from pinctrl-amd.h)
-#define WAKE_INT_MASTER_REG 0x0
-#define GPIO_PIN_REG_BASE 0x100
-#define PIN_REG_SIZE 0x4
+#define WAKE_INT_MASTER_REG 0x100
 
-static struct amd_gpio *gpio_dev;
-static char *debounce_test_buffer;
+// Forward declarations for functions we're testing
+static int amd_gpio_set_debounce(struct amd_gpio *gpio, unsigned int pin, unsigned int debounce);
 
-static int gpio_test_init(struct kunit *test)
+static struct amd_gpio *create_mock_gpio_dev(struct kunit *test)
 {
-	gpio_dev = kunit_kzalloc(test, sizeof(*gpio_dev), GFP_KERNEL);
-	if (!gpio_dev)
-		return -ENOMEM;
-
-	debounce_test_buffer = kunit_kzalloc(test, 8192, GFP_KERNEL);
-	if (!debounce_test_buffer)
-		return -ENOMEM;
-
-	gpio_dev->base = debounce_test_buffer;
-	return 0;
+	struct amd_gpio *gpio_dev = kunit_kzalloc(test, sizeof(*gpio_dev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev);
+	
+	gpio_dev->base = kunit_kzalloc(test, 8192, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev->base);
+	
+	return gpio_dev;
 }
 
 static void test_amd_gpio_set_debounce_less_than_61(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	int ret;
-	
+
 	// Clear WAKE_INT_MASTER_REG to avoid INTERNAL_GPIO0_DEBOUNCE
-	*((u32 *)(debounce_test_buffer + WAKE_INT_MASTER_REG)) = 0;
+	*((u32 *)(gpio_dev->base + WAKE_INT_MASTER_REG)) = 0;
 
 	// Set debounce < 61 to hit the first range
 	ret = amd_gpio_set_debounce(gpio_dev, 1, 50);
@@ -48,62 +44,79 @@ static void test_amd_gpio_set_debounce_less_than_61(struct kunit *test)
 
 static void test_amd_gpio_set_debounce_zero_offset(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	u32 val = INTERNAL_GPIO0_DEBOUNCE;
-	u32 *reg = (u32 *)(debounce_test_buffer + WAKE_INT_MASTER_REG);
+	u32 *reg = (u32 *)(gpio_dev->base + WAKE_INT_MASTER_REG);
+	int ret;
+	
 	*reg = val;
 	
-	int ret = amd_gpio_set_debounce(gpio_dev, 0, 1000);
+	// Test with GPIO offset 0 and non-zero debounce
+	ret = amd_gpio_set_debounce(gpio_dev, 0, 1000);
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static void test_amd_gpio_set_debounce_valid_range(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	int ret;
+	
 	ret = amd_gpio_set_debounce(gpio_dev, 1, 2000); // falls in 3rd range
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static void test_amd_gpio_set_debounce_max_range(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	int ret;
+	
 	ret = amd_gpio_set_debounce(gpio_dev, 2, 300000); // falls in 5th range
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static void test_amd_gpio_set_debounce_invalid_range(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	int ret;
+	
 	ret = amd_gpio_set_debounce(gpio_dev, 3, 2000000); // exceeds max
 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
 }
 
 static void test_amd_gpio_set_debounce_zero_debounce(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	int ret;
+	
 	ret = amd_gpio_set_debounce(gpio_dev, 4, 0); // disables debounce
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static void test_amd_gpio_set_debounce_second_range(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	int ret;
+	
 	ret = amd_gpio_set_debounce(gpio_dev, 5, 100); // hits 2nd range
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static void test_amd_gpio_set_debounce_fourth_range(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	int ret;
+	
 	ret = amd_gpio_set_debounce(gpio_dev, 6, 10000); // hits 4th range
 	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static void test_amd_gpio_set_debounce_internal_gpio0_debounce(struct kunit *test)
 {
+	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
 	int ret;
 	
 	// Set WAKE_INT_MASTER_REG to include INTERNAL_GPIO0_DEBOUNCE
-	*((u32 *)(debounce_test_buffer + WAKE_INT_MASTER_REG)) = INTERNAL_GPIO0_DEBOUNCE;
+	*((u32 *)(gpio_dev->base + WAKE_INT_MASTER_REG)) = INTERNAL_GPIO0_DEBOUNCE;
 	
 	// Provide a non-zero debounce value, which should be overridden to 0
 	ret = amd_gpio_set_debounce(gpio_dev, 0, 100);
@@ -127,7 +140,6 @@ static struct kunit_case gpio_debounce_test_cases[] = {
 
 static struct kunit_suite gpio_debounce_test_suite = {
 	.name = "gpio_debounce_test",
-	.init = gpio_test_init,
 	.test_cases = gpio_debounce_test_cases,
 };
 

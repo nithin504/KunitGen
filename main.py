@@ -29,7 +29,7 @@ def main():
     temperature = 0.2
     # --- Step 1: Fetch source code from GitHub ---
     try:
-        file_path="/home/amd/linux/drivers/" #add requried file
+        file_path="/home/amd/linux/drivers/gpio/gpio-amdpt.c" #add requried file
         source_code = fetch_github_raw_file(file_path)
         #source_code = fetch_github_raw_file(github_raw_url) # use this to get from git hub
     except Exception as e:

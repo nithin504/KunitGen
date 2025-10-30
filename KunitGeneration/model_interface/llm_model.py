@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
-from google import genai
+
 import re
 # Import your prompt template
 # Ensure this path is correct relative to where you run the script
@@ -29,7 +29,7 @@ class KUnitTestGenerator:
             self.base_dir / "reference_testcases" / "kunit_test2.c",
             self.base_dir / "reference_testcases" / "kunit_test3.c",
         ]
-        self.error_log_file = self.base_dir / "compilation_log" / "clean_compile_errors.txt"
+        self.error_log_file = self.base_dir / "compilation_log" / "compile_error.txt"
 
         # --- Model ---
         self.model_name = model_name

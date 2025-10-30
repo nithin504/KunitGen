@@ -1,1 +1,0 @@
-static inline void amd_gpio_unregister_s2idle_ops(void) {}

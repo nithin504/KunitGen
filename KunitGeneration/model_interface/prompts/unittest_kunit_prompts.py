@@ -1,5 +1,5 @@
 
-kunit_generation_prompt = f"""
+kunit_generation_prompt = """
 You are an expert Linux kernel developer with deep experience in writing high-quality, coverage-focused KUnit tests.
 
 Your task is to automatically generate a **complete, compilable KUnit test file** for the given C source file, using a reference source and an error log to guide the generation. The goal is to produce code that compiles without any errors.
@@ -7,7 +7,7 @@ Your task is to automatically generate a **complete, compilable KUnit test file*
 ## Inputs
 
 1. Reference Source (`source_code`):
-{source_code}
+{sample_code2}
 
 2. Previous Compilation Errors (`error_logs`):
 {error_logs}
