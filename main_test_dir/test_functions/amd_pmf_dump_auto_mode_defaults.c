@@ -1,0 +1,1 @@
+static void amd_pmf_dump_auto_mode_defaults(struct auto_mode_mode_config *data) {}

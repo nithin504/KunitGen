@@ -26,10 +26,10 @@ def main():
 
     model_name = "qwen/qwen3-coder-480b-a35b-instruct"  # Free model on OpenRouter
    
-    temperature = 0.2
+    temperature = 0.4
     # --- Step 1: Fetch source code from GitHub ---
     try:
-        file_path="/home/amd/linux/drivers/gpio/gpio-amdpt.c" #add requried file
+        file_path="/home/amd/linux/drivers/platform/x86/amd/pmf/auto-mode.c" #add requried file
         source_code = fetch_github_raw_file(file_path)
         #source_code = fetch_github_raw_file(github_raw_url) # use this to get from git hub
     except Exception as e:

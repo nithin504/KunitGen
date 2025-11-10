@@ -86,7 +86,7 @@ class KUnitTestGenerator:
 
     # ---------------- Kernel Build Integration ----------------
     def _update_makefile(self, test_name: str):
-        makefile_path = Path("/home/amd/linux/drivers/gpio/Makefile")
+        makefile_path = Path("/home/amd/linux/drivers/platform/x86/amd/pmf/Makefile")
         if not makefile_path.exists():
             print(f"⚠️  No Makefile found at '{makefile_path}' — skipping Makefile update.")
             return
@@ -121,7 +121,7 @@ class KUnitTestGenerator:
         Ensures the main kernel Kconfig sources the custom test Kconfig file,
         and adds the specific config entry for the given test to that file.
         """
-        main_kconfig_path = Path("/home/amd/linux/drivers/gpio/Kconfig")
+        main_kconfig_path = Path("/home/amd/linux/drivers/platform/x86/amd/pmf/Kconfig")
         backup_path = main_kconfig_path.with_suffix(".KunitGen_backup")
         config_name = test_name.upper()
     
@@ -163,7 +163,7 @@ class KUnitTestGenerator:
 
         return True
     def _update_test_config(self, test_name: str):
-        cfg_path = Path("/home/amd/linux/my_gpio.config")
+        cfg_path = Path("/home/amd/linux/my_pmf.config")
         if not cfg_path.exists():
             print(f"⚠️  No my_pinctrl.config found at '{cfg_path}' — skipping.")
             return
@@ -251,7 +251,42 @@ class KUnitTestGenerator:
         #while self._compile_and_check()==True:
             print(f"\n🔹 Generating test for {func_file_path.name} (Attempt {attempt}/{self.max_retries})...")
 
-            final_prompt = self.prompt_template.format(func_code=func_code, **context)
+            #final_prompt = self.prompt_template.format(func_code=func_code, **context)
+            final_prompt=f"""
+You are an expert Linux kernel developer with deep experience in writing high-quality, coverage-focused KUnit tests.
+
+Your task is to automatically generate a **complete, compilable KUnit test file** for the given C source file, using a reference source and an error log to guide the generation. The goal is to produce code that compiles without any errors.
+
+## Inputs
+
+1. Reference Source (`source_code`):
+{sample_code2}
+
+2. Previous Compilation Errors (`error_logs`):
+{error_logs}
+
+## Critical Rules
+
+1. Include all necessary kernel headers for structs, macros, and functions.
+2. Use pointers for opaque structs and allocate with `kunit_kzalloc(test, sizeof(*obj), GFP_KERNEL)`.
+3. Avoid modifying read-only or const members.
+4. Ensure all functions are declared or included via headers; do not call undeclared functions.
+5. Include required macros/constants via headers.
+6. Place all test cases in a single `static struct kunit_case` array.
+7. Define one `static struct kunit_suite` referencing this array with `.test_cases`.
+8. Register the suite with `kunit_test_suite(my_suite)`.
+9. Use `KUNIT_EXPECT_*` macros for assertions.
+10. Avoid duplicating any errors from `error_logs`.
+11. Hit the unhit branches such that include the source file obtain code coverage.
+12. **Do NOT mock the functions being tested**. You may mock **dependencies** (helper functions, hardware calls, or internal struct accessors) if required using #define and cannot change the source file.
+13. add #include "gpio-amdpt.c" for each testcase
+## Instructions
+
+- Analyze all functions in `source_code`.
+- Generate tests covering all branches, edge cases, and error paths.
+- Only mock dependencies if required; never mock the function under test.
+- Output only compilable KUnit C source code.
+"""
             generated_test = self._query_model(final_prompt)
             out_file.write_text(generated_test, encoding="utf-8")
 
