@@ -313,30 +313,21 @@ Rules:
             # Compilation feedback loop remains unchanged
             break
         
-    def run():
-    """Main entry point to generate KUnit tests for all functions."""
-    generator = KUnitTestGenerator(
-        main_test_dir=Path("/home/amd/nithin/KunitGen/main_test_dir"),
-        model_name="qwen/qwen3-coder-480b-a35b-instruct",
-        temperature=0.4,
-        max_retries=3
-    )
+    def run(self):
+        print(f"--- Starting KUnit Test Generation in '{self.base_dir}' ---")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.error_log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Ensure output and log directories exist
-    generator.output_dir.mkdir(parents=True, exist_ok=True)
-    generator.error_log_file.parent.mkdir(parents=True, exist_ok=True)
+        func_files = list(self.functions_dir.glob("*.c"))
+        if not func_files:
+            print(f"❌ No C files found in '{self.functions_dir}'")
+            return
 
-    # Collect all .c files from test_functions
-    func_files = list(generator.functions_dir.glob("*.c"))
-    if not func_files:
-        print(f"❌ No C files found in '{generator.functions_dir}'")
-        return
+        for func_file in func_files:
+            self.generate_test_for_function(func_file)
 
-    print(f"--- 🚀 Starting KUnit Test Generation for {len(func_files)} files ---")
-    for func_file in func_files:
-        generator.generate_test_for_function(func_file)
+        print("\n--- ✅ All tests processed. ---")
 
-    print("\n--- ✅ All tests processed. ---")
 
 
 if __name__ == "__main__":
