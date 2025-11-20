@@ -11,20 +11,15 @@ struct pt_gpio_chip {
 
 #define PT_SYNC_REG 0x0
 #define TEST_PIN_OFFSET 5
+#define TEST_REG_SIZE 0x1000
 
-static char test_mmio_buffer[4096];
+static char test_mmio_buffer[TEST_REG_SIZE];
 static struct pt_gpio_chip mock_pt_gpio;
 static struct gpio_chip mock_gc;
 
-// Stub for dev_dbg and dev_warn to prevent compilation issues
+// Stub for dev_dbg and dev_warn to avoid compilation issues
 #define dev_dbg(dev, fmt, ...) printk(fmt, ##__VA_ARGS__)
 #define dev_warn(dev, fmt, ...) printk(fmt, ##__VA_ARGS__)
-
-// Helper to get private data from gpio_chip
-static inline void *gpiochip_get_data(const struct gpio_chip *gc)
-{
-	return gc->private;
-}
 
 // Include the function under test
 static int pt_gpio_request(struct gpio_chip *gc, unsigned offset)
@@ -58,22 +53,22 @@ static void test_pt_gpio_request_success(struct kunit *test)
 	u32 reg_val;
 
 	// Initialize mock structures
-	mock_pt_gpio.reg_base = test_mmio_buffer;
-	mock_gc.private = &mock_pt_gpio;
+	mock_gc.parent = NULL;
 	mock_gc.bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gc.bgpio_lock);
-
-	// Clear register
+	mock_pt_gpio.reg_base = test_mmio_buffer;
+	
+	// Zero out the register
 	writel(0x0, mock_pt_gpio.reg_base + PT_SYNC_REG);
 
-	// Request GPIO pin
+	// Call the function
 	ret = pt_gpio_request(&mock_gc, TEST_PIN_OFFSET);
 
-	// Verify success
+	// Check return value
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	// Check if bit is set
+	// Check that the bit was set
 	reg_val = readl(mock_pt_gpio.reg_base + PT_SYNC_REG);
-	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(TEST_PIN_OFFSET)));
+	KUNIT_EXPECT_NE(test, reg_val & BIT(TEST_PIN_OFFSET), 0U);
 }
 
 static void test_pt_gpio_request_pin_already_used(struct kunit *test)
@@ -81,50 +76,49 @@ static void test_pt_gpio_request_pin_already_used(struct kunit *test)
 	int ret;
 
 	// Initialize mock structures
-	mock_pt_gpio.reg_base = test_mmio_buffer;
-	mock_gc.private = &mock_pt_gpio;
+	mock_gc.parent = NULL;
 	mock_gc.bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gc.bgpio_lock);
-
-	// Pre-set the pin as used
+	mock_pt_gpio.reg_base = test_mmio_buffer;
+	
+	// Pre-set the pin bit
 	writel(BIT(TEST_PIN_OFFSET), mock_pt_gpio.reg_base + PT_SYNC_REG);
 
-	// Try to request same pin again
+	// Call the function
 	ret = pt_gpio_request(&mock_gc, TEST_PIN_OFFSET);
 
-	// Should return error
+	// Check return value is error
 	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
 }
 
-static void test_pt_gpio_request_different_pins(struct kunit *test)
+static void test_pt_gpio_request_different_pin(struct kunit *test)
 {
 	int ret;
 	u32 reg_val;
 
 	// Initialize mock structures
-	mock_pt_gpio.reg_base = test_mmio_buffer;
-	mock_gc.private = &mock_pt_gpio;
+	mock_gc.parent = NULL;
 	mock_gc.bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(mock_gc.bgpio_lock);
+	mock_pt_gpio.reg_base = test_mmio_buffer;
+	
+	// Set a different pin
+	writel(BIT(2), mock_pt_gpio.reg_base + PT_SYNC_REG);
 
-	// Clear register
-	writel(0x0, mock_pt_gpio.reg_base + PT_SYNC_REG);
+	// Request a different pin
+	ret = pt_gpio_request(&mock_gc, TEST_PIN_OFFSET);
 
-	// Request two different pins
-	ret = pt_gpio_request(&mock_gc, 0);
+	// Check return value
 	KUNIT_EXPECT_EQ(test, ret, 0);
 
-	ret = pt_gpio_request(&mock_gc, 10);
-	KUNIT_EXPECT_EQ(test, ret, 0);
-
-	// Check both bits are set
+	// Check that both bits are set
 	reg_val = readl(mock_pt_gpio.reg_base + PT_SYNC_REG);
-	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(0)));
-	KUNIT_EXPECT_TRUE(test, !!(reg_val & BIT(10)));
+	KUNIT_EXPECT_NE(test, reg_val & BIT(2), 0U);
+	KUNIT_EXPECT_NE(test, reg_val & BIT(TEST_PIN_OFFSET), 0U);
 }
 
 static struct kunit_case pt_gpio_request_test_cases[] = {
 	KUNIT_CASE(test_pt_gpio_request_success),
 	KUNIT_CASE(test_pt_gpio_request_pin_already_used),
-	KUNIT_CASE(test_pt_gpio_request_different_pins),
+	KUNIT_CASE(test_pt_gpio_request_different_pin),
 	{}
 };
 

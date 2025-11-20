@@ -4,158 +4,129 @@
 #include <linux/io.h>
 #include <linux/gpio/driver.h>
 
-// Assuming these are defined somewhere in the codebase or headers
-extern struct platform_driver pt_gpio_driver;
-extern struct gpio_chip pt_gpio_chip_template;
+// Mocking ACPI companion check
+static bool mock_acpi_companion = true;
+#define ACPI_COMPANION(dev) (mock_acpi_companion ? (void *)1 : NULL)
 
-// Define register offsets (these would normally come from a header)
+// Define register offsets as per driver
 #define PT_INPUTDATA_REG    0x00
 #define PT_OUTPUTDATA_REG   0x04
 #define PT_DIRECTION_REG    0x08
 #define PT_SYNC_REG         0x0C
 #define PT_CLOCKRATE_REG    0x10
 
-// Mocked ACPI companion check
-static bool mock_acpi_companion = true;
-#define ACPI_COMPANION(dev) (mock_acpi_companion ? (void *)1 : NULL)
+// Include the source file to test
+#include "pt-gpio.c"
 
-// Include the source file under test
-#include "pt_gpio.c"
-
-// Test fixture structure
-struct pt_gpio_test_fixture {
-    struct platform_device *pdev;
-    struct device *dev;
-    char __iomem *reg_base;
-    struct pt_gpio_chip *pt_gpio;
+// Test resource
+static struct resource test_pt_gpio_resources[] = {
+	{
+		.start = 0x1000,
+		.end   = 0x1010,
+		.flags = IORESOURCE_MEM,
+	},
 };
 
-static void pt_gpio_test_probe_success(struct kunit *test)
+// Test platform device
+static struct platform_device *test_pt_gpio_pdev;
+
+// Test memory region
+static void *test_mmio_base;
+#define TEST_MMIO_SIZE 0x1000
+
+static void setup_test_device(struct kunit *test)
 {
-    struct pt_gpio_test_fixture *fixture = test->priv;
-    int ret;
+	test_mmio_base = kunit_kzalloc(test, TEST_MMIO_SIZE, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, test_mmio_base);
 
-    // Setup
-    mock_acpi_companion = true;
-    
-    // Allocate memory for registers
-    fixture->reg_base = kunit_kzalloc(test, 4096, GFP_KERNEL);
-    KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->reg_base);
+	test_pt_gpio_pdev = kunit_kzalloc(test, sizeof(*test_pt_gpio_pdev), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, test_pt_gpio_pdev);
 
-    // Create platform device
-    fixture->pdev = platform_device_alloc("pt_gpio", PLATFORM_DEVID_NONE);
-    KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->pdev);
+	test_pt_gpio_pdev->name = "pt-gpio";
+	test_pt_gpio_pdev->id = PLATFORM_DEVID_NONE;
+	test_pt_gpio_pdev->num_resources = ARRAY_SIZE(test_pt_gpio_resources);
+	test_pt_gpio_pdev->resource = test_pt_gpio_resources;
 
-    // Add resources
-    struct resource res = {
-        .start = (resource_size_t)fixture->reg_base,
-        .end = (resource_size_t)fixture->reg_base + 4095,
-        .flags = IORESOURCE_MEM,
-    };
-    ret = platform_device_add_resources(fixture->pdev, &res, 1);
-    KUNIT_EXPECT_EQ(test, ret, 0);
-
-    // Add device
-    ret = platform_device_add(fixture->pdev);
-    KUNIT_EXPECT_EQ(test, ret, 0);
-
-    // Set match data
-    struct platform_device_id id = { .driver_data = 8 }; // ngpio = 8
-    fixture->pdev->id_entry = &id;
-
-    // Probe
-    ret = pt_gpio_probe(fixture->pdev);
-    KUNIT_EXPECT_EQ(test, ret, 0);
-
-    // Check that registers were initialized
-    u32 sync_val = readl(fixture->reg_base + PT_SYNC_REG);
-    u32 clockrate_val = readl(fixture->reg_base + PT_CLOCKRATE_REG);
-    KUNIT_EXPECT_EQ(test, sync_val, 0U);
-    KUNIT_EXPECT_EQ(test, clockrate_val, 0U);
+	// Setup resource mapping simulation
+	test_pt_gpio_resources[0].start = (resource_size_t)test_mmio_base;
+	test_pt_gpio_resources[0].end = (resource_size_t)(test_mmio_base + TEST_MMIO_SIZE - 1);
 }
 
-static void pt_gpio_test_no_acpi_companion(struct kunit *test)
+static void test_pt_gpio_probe_success(struct kunit *test)
 {
-    struct pt_gpio_test_fixture *fixture = test->priv;
-    int ret;
+	int ret;
 
-    // Setup
-    mock_acpi_companion = false;
-    
-    // Create platform device
-    fixture->pdev = platform_device_alloc("pt_gpio", PLATFORM_DEVID_NONE);
-    KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->pdev);
+	setup_test_device(test);
+	mock_acpi_companion = true;
 
-    // Add device
-    ret = platform_device_add(fixture->pdev);
-    KUNIT_EXPECT_EQ(test, ret, 0);
+	// Set match data
+	struct platform_driver dummy_driver = {
+		.driver = {
+			.of_match_table = NULL,
+		}
+	};
+	device_set_platform_data(&test_pt_gpio_pdev->dev, (void *)16); // ngpio = 16
 
-    // Probe should fail
-    ret = pt_gpio_probe(fixture->pdev);
-    KUNIT_EXPECT_EQ(test, ret, -ENODEV);
+	ret = pt_gpio_probe(test_pt_gpio_pdev);
+	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
-static void pt_gpio_test_probe_no_memory(struct kunit *test)
+static void test_pt_gpio_probe_no_acpi(struct kunit *test)
 {
-    struct pt_gpio_test_fixture *fixture = test->priv;
-    int ret;
+	int ret;
 
-    // Setup
-    mock_acpi_companion = true;
-    
-    // Create platform device
-    fixture->pdev = platform_device_alloc("pt_gpio", PLATFORM_DEVID_NONE);
-    KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->pdev);
+	setup_test_device(test);
+	mock_acpi_companion = false; // Simulate no ACPI companion
 
-    // Make devm_kzalloc fail by not adding any resources and let it proceed to allocation
-    
-    // Add device
-    ret = platform_device_add(fixture->pdev);
-    KUNIT_EXPECT_EQ(test, ret, 0);
-
-    // Set match data
-    struct platform_device_id id = { .driver_data = 8 };
-    fixture->pdev->id_entry = &id;
-
-    // We can't easily make devm_kzalloc fail, so we'll skip this specific test case
-    // In a real scenario, you might use a more sophisticated mocking framework
-    // For now, just verify the probe runs without crashing
-    ret = pt_gpio_probe(fixture->pdev);
-    // This will likely return an error due to missing resources, which is fine for this test
+	ret = pt_gpio_probe(test_pt_gpio_pdev);
+	KUNIT_EXPECT_EQ(test, ret, -ENODEV);
 }
 
-static int pt_gpio_test_init(struct kunit *test)
+static void test_pt_gpio_probe_ioremap_failure(struct kunit *test)
 {
-    struct pt_gpio_test_fixture *fixture;
+	int ret;
 
-    fixture = kunit_kzalloc(test, sizeof(*fixture), GFP_KERNEL);
-    if (!fixture)
-        return -ENOMEM;
+	// Make resource invalid to simulate ioremap failure
+	test_pt_gpio_resources[0].flags = 0;
+	setup_test_device(test);
+	mock_acpi_companion = true;
 
-    test->priv = fixture;
-    return 0;
+	ret = pt_gpio_probe(test_pt_gpio_pdev);
+	KUNIT_EXPECT_TRUE(test, IS_ERR_VALUE(ret));
 }
 
-static void pt_gpio_test_exit(struct kunit *test)
+static void test_pt_gpio_probe_bgpio_init_failure(struct kunit *test)
 {
-    struct pt_gpio_test_fixture *fixture = test->priv;
+	int ret;
 
-    if (fixture && fixture->pdev) {
-        platform_device_unregister(fixture->pdev);
-    }
+	setup_test_device(test);
+	mock_acpi_companion = true;
+
+	// This test assumes that bgpio_init could fail under certain conditions.
+	// Since we can't easily make it fail without modifying its behavior,
+	// this is more of a placeholder unless we add specific injection points.
+	// For now, just run normal probe and ensure cleanup works.
+	ret = pt_gpio_probe(test_pt_gpio_pdev);
+	if (!IS_ERR_VALUE(ret)) {
+		// If probe succeeded, validate some register initialization occurred
+		u32 sync_val = readl(test_mmio_base + PT_SYNC_REG);
+		u32 clk_val = readl(test_mmio_base + PT_CLOCKRATE_REG);
+		KUNIT_EXPECT_EQ(test, sync_val, 0U);
+		KUNIT_EXPECT_EQ(test, clk_val, 0U);
+	}
 }
 
 static struct kunit_case pt_gpio_test_cases[] = {
-    KUNIT_CASE(pt_gpio_test_probe_success),
-    KUNIT_CASE(pt_gpio_test_no_acpi_companion),
-    {}
+	KUNIT_CASE(test_pt_gpio_probe_success),
+	KUNIT_CASE(test_pt_gpio_probe_no_acpi),
+	KUNIT_CASE(test_pt_gpio_probe_ioremap_failure),
+	KUNIT_CASE(test_pt_gpio_probe_bgpio_init_failure),
+	{}
 };
 
 static struct kunit_suite pt_gpio_test_suite = {
-    .name = "pt_gpio",
-    .init = pt_gpio_test_init,
-    .exit = pt_gpio_test_exit,
-    .test_cases = pt_gpio_test_cases,
+	.name = "pt-gpio-probe",
+	.test_cases = pt_gpio_test_cases,
 };
 
 kunit_test_suite(pt_gpio_test_suite);

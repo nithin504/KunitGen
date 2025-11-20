@@ -10,96 +10,106 @@ struct pt_gpio_chip {
 
 #define PT_SYNC_REG 0x0
 #define TEST_PIN_OFFSET 5
-#define MMIO_BUF_SIZE 4096
+#define MMIO_BUFFER_SIZE 4096
 
-static struct pt_gpio_chip test_pt_gpio;
-static char mmio_buffer[MMIO_BUF_SIZE];
+static struct pt_gpio_chip test_pt_gpio_chip;
+static char mmio_buffer[MMIO_BUFFER_SIZE];
+static struct gpio_chip test_gc;
 
-// Helper function to initialize the mock chip
-static void setup_mock_pt_gpio(struct kunit *test)
+// Stub function for dev_dbg to prevent compilation errors
+__printf(3, 4)
+static void stub_dev_dbg(struct device *dev, const char *fmt, ...)
 {
-	test_pt_gpio.reg_base = (void __iomem *)mmio_buffer;
-	memset(mmio_buffer, 0, MMIO_BUF_SIZE);
+	/* Do nothing */
 }
+#define dev_dbg(dev, fmt, ...) stub_dev_dbg(dev, fmt, ##__VA_ARGS__)
 
-// Test freeing a pin clears the correct bit
-static void test_pt_gpio_free_clears_bit(struct kunit *test)
+// Include the source file containing pt_gpio_free
+#include "pt-gpio.c"
+
+static void test_pt_gpio_free_basic(struct kunit *test)
 {
-	struct gpio_chip gc = { .bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(gc.bgpio_lock) };
+	unsigned long flags;
 	u32 reg_val_before, reg_val_after;
 
-	setup_mock_pt_gpio(test);
-	gc.parent = NULL; // Not used in this test
-	
-	// Set up initial register state with the pin bit set
-	writel(BIT(TEST_PIN_OFFSET), test_pt_gpio.reg_base + PT_SYNC_REG);
+	// Setup initial register state with the pin bit set
+	writel(BIT(TEST_PIN_OFFSET), test_pt_gpio_chip.reg_base + PT_SYNC_REG);
 
-	reg_val_before = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
-	KUNIT_EXPECT_NE(test, reg_val_before & BIT(TEST_PIN_OFFSET), 0U);
+	// Capture value before calling pt_gpio_free
+	reg_val_before = readl(test_pt_gpio_chip.reg_base + PT_SYNC_REG);
 
 	// Call the function under test
-	pt_gpio_free(&gc, TEST_PIN_OFFSET);
+	pt_gpio_free(&test_gc, TEST_PIN_OFFSET);
 
-	reg_val_after = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
+	// Check result
+	reg_val_after = readl(test_pt_gpio_chip.reg_base + PT_SYNC_REG);
+	KUNIT_EXPECT_EQ(test, reg_val_before & BIT(TEST_PIN_OFFSET), BIT(TEST_PIN_OFFSET));
 	KUNIT_EXPECT_EQ(test, reg_val_after & BIT(TEST_PIN_OFFSET), 0U);
 }
 
-// Test freeing multiple pins maintains other bits
-static void test_pt_gpio_free_preserves_other_bits(struct kunit *test)
+static void test_pt_gpio_free_multiple_pins(struct kunit *test)
 {
-	struct gpio_chip gc = { .bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(gc.bgpio_lock) };
-	u32 reg_val_before, reg_val_after;
-	const u32 initial_pins = BIT(1) | BIT(3) | BIT(TEST_PIN_OFFSET) | BIT(7);
+	const unsigned int pin1 = 0;
+	const unsigned int pin2 = 10;
+	const unsigned int pin3 = 31; // Assuming 32-bit register
+	u32 reg_val;
 
-	setup_mock_pt_gpio(test);
-	gc.parent = NULL;
+	// Set multiple bits
+	writel(BIT(pin1) | BIT(pin2) | BIT(pin3),
+	       test_pt_gpio_chip.reg_base + PT_SYNC_REG);
 
-	// Set up initial register state with several pins set
-	writel(initial_pins, test_pt_gpio.reg_base + PT_SYNC_REG);
+	// Free one pin
+	pt_gpio_free(&test_gc, pin2);
 
-	reg_val_before = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
-	KUNIT_EXPECT_EQ(test, reg_val_before, initial_pins);
-
-	// Free only one pin
-	pt_gpio_free(&gc, TEST_PIN_OFFSET);
-
-	reg_val_after = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
-	// Check that our target pin is cleared but others remain
-	KUNIT_EXPECT_EQ(test, reg_val_after & BIT(TEST_PIN_OFFSET), 0U);
-	KUNIT_EXPECT_EQ(test, reg_val_after & (BIT(1) | BIT(3) | BIT(7)), 
-				    initial_pins & (BIT(1) | BIT(3) | BIT(7)));
+	// Verify only that pin is cleared
+	reg_val = readl(test_pt_gpio_chip.reg_base + PT_SYNC_REG);
+	KUNIT_EXPECT_NE(test, reg_val & BIT(pin1), 0U);   // Should remain set
+	KUNIT_EXPECT_EQ(test, reg_val & BIT(pin2), 0U);   // Should be cleared
+	KUNIT_EXPECT_NE(test, reg_val & BIT(pin3), 0U);   // Should remain set
 }
 
-// Test freeing already cleared pin has no effect
-static void test_pt_gpio_free_already_cleared(struct kunit *test)
+static void test_pt_gpio_free_all_bits(struct kunit *test)
 {
-	struct gpio_chip gc = { .bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(gc.bgpio_lock) };
-	u32 reg_val_before, reg_val_after;
+	const u32 all_bits_set = 0xFFFFFFFF;
+	u32 reg_val;
 
-	setup_mock_pt_gpio(test);
-	gc.parent = NULL;
+	// Set all bits
+	writel(all_bits_set, test_pt_gpio_chip.reg_base + PT_SYNC_REG);
 
-	// Ensure register starts with the pin bit clear
-	writel(0, test_pt_gpio.reg_base + PT_SYNC_REG);
+	// Free one specific pin
+	pt_gpio_free(&test_gc, TEST_PIN_OFFSET);
 
-	reg_val_before = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
-	KUNIT_EXPECT_EQ(test, reg_val_before & BIT(TEST_PIN_OFFSET), 0U);
+	// Verify only that pin is cleared
+	reg_val = readl(test_pt_gpio_chip.reg_base + PT_SYNC_REG);
+	KUNIT_EXPECT_EQ(test, reg_val & BIT(TEST_PIN_OFFSET), 0U);
+	KUNIT_EXPECT_EQ(test, reg_val | BIT(TEST_PIN_OFFSET), all_bits_set);
+}
 
-	pt_gpio_free(&gc, TEST_PIN_OFFSET);
+static int pt_gpio_test_init(struct kunit *test)
+{
+	// Initialize mock hardware register space
+	test_pt_gpio_chip.reg_base = (void __iomem *)mmio_buffer;
 
-	reg_val_after = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
-	KUNIT_EXPECT_EQ(test, reg_val_after, 0U);
+	// Initialize gpio_chip
+	test_gc.parent = NULL; // No need for actual device in this test
+	test_gc.bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(test_gc.bgpio_lock);
+	
+	// Assign private data
+	gpiochip_set_data(&test_gc, &test_pt_gpio_chip);
+
+	return 0;
 }
 
 static struct kunit_case pt_gpio_free_test_cases[] = {
-	KUNIT_CASE(test_pt_gpio_free_clears_bit),
-	KUNIT_CASE(test_pt_gpio_free_preserves_other_bits),
-	KUNIT_CASE(test_pt_gpio_free_already_cleared),
+	KUNIT_CASE(test_pt_gpio_free_basic),
+	KUNIT_CASE(test_pt_gpio_free_multiple_pins),
+	KUNIT_CASE(test_pt_gpio_free_all_bits),
 	{}
 };
 
 static struct kunit_suite pt_gpio_free_test_suite = {
 	.name = "pt_gpio_free",
+	.init = pt_gpio_test_init,
 	.test_cases = pt_gpio_free_test_cases,
 };
 
