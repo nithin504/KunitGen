@@ -1,103 +1,146 @@
-// SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
+#include <linux/device.h>
 #include <linux/platform_device.h>
-#include <linux/err.h>
-#include <linux/io.h>
+#include <linux/module.h>
 
-// Mock structures based on typical usage
-struct amd_gpio {
-	void __iomem *iomux_base;
-	struct platform_device *pdev;
+// Assuming these structures and functions exist based on context
+enum amd_pmf_mode {
+    MODE_AUTO,
+    MODE_PERFORMANCE,
+    MODE_QUIET,
 };
 
-// Function under test (copied and made static for direct access)
-static int test_function_under_test(struct amd_gpio *gpio_dev, int selector)
-{
-	if (!gpio_dev->iomux_base) {
-		dev_err(&gpio_dev->pdev->dev, "iomux function %d group not supported\n", selector);
-		return -EINVAL;
-	}
-	return 0;
-}
-
-// Test case: iomux_base is NULL, should return -EINVAL
-static void test_function_iomux_base_null(struct kunit *test)
-{
-	struct amd_gpio gpio_dev = {
-		.iomux_base = NULL,
-		.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL)
-	};
-	int ret;
-
-	// Initialize pdev->dev to prevent potential crashes in dev_err()
-	device_initialize(&gpio_dev.pdev->dev);
-
-	ret = test_function_under_test(&gpio_dev, 5);
-
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-}
-
-// Test case: iomux_base is valid, should return 0
-static void test_function_iomux_base_valid(struct kunit *test)
-{
-	char dummy_mem[0x1000];
-	struct amd_gpio gpio_dev = {
-		.iomux_base = dummy_mem,
-		.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL)
-	};
-	int ret;
-
-	device_initialize(&gpio_dev.pdev->dev);
-
-	ret = test_function_under_test(&gpio_dev, 10);
-
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-// Test case: edge case with selector 0
-static void test_function_selector_zero(struct kunit *test)
-{
-	struct amd_gpio gpio_dev = {
-		.iomux_base = NULL,
-		.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL)
-	};
-	int ret;
-
-	device_initialize(&gpio_dev.pdev->dev);
-
-	ret = test_function_under_test(&gpio_dev, 0);
-
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-}
-
-// Test case: large selector value
-static void test_function_large_selector(struct kunit *test)
-{
-	char dummy_mem[0x1000];
-	struct amd_gpio gpio_dev = {
-		.iomux_base = dummy_mem,
-		.pdev = kunit_kzalloc(test, sizeof(*gpio_dev.pdev), GFP_KERNEL)
-	};
-	int ret;
-
-	device_initialize(&gpio_dev.pdev->dev);
-
-	ret = test_function_under_test(&gpio_dev, INT_MAX);
-
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static struct kunit_case generated_test_cases[] = {
-	KUNIT_CASE(test_function_iomux_base_null),
-	KUNIT_CASE(test_function_iomux_base_valid),
-	KUNIT_CASE(test_function_selector_zero),
-	KUNIT_CASE(test_function_large_selector),
-	{}
+struct transition_entry {
+    enum amd_pmf_mode target_mode;
 };
 
-static struct kunit_suite generated_test_suite = {
-	.name = "generated-function-test",
-	.test_cases = generated_test_cases,
+struct config_store {
+    enum amd_pmf_mode current_mode;
+    struct transition_entry transition[10]; // Assuming max 10 transitions
 };
 
-kunit_test_suite(generated_test_suite);
+struct amd_pmf_device {
+    struct device *dev;
+    struct config_store config_store;
+};
+
+extern void amd_pmf_set_automode(struct amd_pmf_device *dev, enum amd_pmf_mode mode, void *unused);
+extern const char *state_as_str(enum amd_pmf_mode mode);
+
+// Mocking dev_dbg since it's not available in KUnit environment
+#define dev_dbg(dev, fmt, ...) printk(fmt, ##__VA_ARGS__)
+
+static struct amd_pmf_device *mock_dev;
+static int set_automode_call_count;
+static enum amd_pmf_mode last_set_mode;
+
+void amd_pmf_set_automode(struct amd_pmf_device *dev, enum amd_pmf_mode mode, void *unused)
+{
+    set_automode_call_count++;
+    last_set_mode = mode;
+}
+
+const char *state_as_str(enum amd_pmf_mode mode)
+{
+    switch (mode) {
+        case MODE_AUTO: return "AUTO";
+        case MODE_PERFORMANCE: return "PERFORMANCE";
+        case MODE_QUIET: return "QUIET";
+        default: return "UNKNOWN";
+    }
+}
+
+static void test_auto_mode_transition_same_mode(struct kunit *test)
+{
+    set_automode_call_count = 0;
+    mock_dev->config_store.current_mode = MODE_AUTO;
+    mock_dev->config_store.transition[0].target_mode = MODE_AUTO;
+
+    // Execute the code under test
+    if (mock_dev->config_store.current_mode != mock_dev->config_store.transition[0].target_mode) {
+        mock_dev->config_store.current_mode = mock_dev->config_store.transition[0].target_mode;
+        dev_dbg(mock_dev->dev, "[AUTO_MODE] moving to mode:%s\n", 
+                state_as_str(mock_dev->config_store.current_mode));
+        amd_pmf_set_automode(mock_dev, mock_dev->config_store.current_mode, NULL);
+    }
+
+    KUNIT_EXPECT_EQ(test, set_automode_call_count, 0);
+}
+
+static void test_auto_mode_transition_different_mode(struct kunit *test)
+{
+    set_automode_call_count = 0;
+    mock_dev->config_store.current_mode = MODE_AUTO;
+    mock_dev->config_store.transition[0].target_mode = MODE_PERFORMANCE;
+
+    // Execute the code under test
+    if (mock_dev->config_store.current_mode != mock_dev->config_store.transition[0].target_mode) {
+        mock_dev->config_store.current_mode = mock_dev->config_store.transition[0].target_mode;
+        dev_dbg(mock_dev->dev, "[AUTO_MODE] moving to mode:%s\n", 
+                state_as_str(mock_dev->config_store.current_mode));
+        amd_pmf_set_automode(mock_dev, mock_dev->config_store.current_mode, NULL);
+    }
+
+    KUNIT_EXPECT_EQ(test, set_automode_call_count, 1);
+    KUNIT_EXPECT_EQ(test, mock_dev->config_store.current_mode, MODE_PERFORMANCE);
+    KUNIT_EXPECT_EQ(test, last_set_mode, MODE_PERFORMANCE);
+}
+
+static void test_auto_mode_transition_multiple_transitions(struct kunit *test)
+{
+    set_automode_call_count = 0;
+    mock_dev->config_store.current_mode = MODE_QUIET;
+    mock_dev->config_store.transition[0].target_mode = MODE_AUTO;
+    mock_dev->config_store.transition[1].target_mode = MODE_PERFORMANCE;
+
+    // First transition
+    int j = 0;
+    if (mock_dev->config_store.current_mode != mock_dev->config_store.transition[j].target_mode) {
+        mock_dev->config_store.current_mode = mock_dev->config_store.transition[j].target_mode;
+        dev_dbg(mock_dev->dev, "[AUTO_MODE] moving to mode:%s\n", 
+                state_as_str(mock_dev->config_store.current_mode));
+        amd_pmf_set_automode(mock_dev, mock_dev->config_store.current_mode, NULL);
+    }
+
+    KUNIT_EXPECT_EQ(test, set_automode_call_count, 1);
+    KUNIT_EXPECT_EQ(test, mock_dev->config_store.current_mode, MODE_AUTO);
+    KUNIT_EXPECT_EQ(test, last_set_mode, MODE_AUTO);
+
+    // Second transition
+    j = 1;
+    if (mock_dev->config_store.current_mode != mock_dev->config_store.transition[j].target_mode) {
+        mock_dev->config_store.current_mode = mock_dev->config_store.transition[j].target_mode;
+        dev_dbg(mock_dev->dev, "[AUTO_MODE] moving to mode:%s\n", 
+                state_as_str(mock_dev->config_store.current_mode));
+        amd_pmf_set_automode(mock_dev, mock_dev->config_store.current_mode, NULL);
+    }
+
+    KUNIT_EXPECT_EQ(test, set_automode_call_count, 2);
+    KUNIT_EXPECT_EQ(test, mock_dev->config_store.current_mode, MODE_PERFORMANCE);
+    KUNIT_EXPECT_EQ(test, last_set_mode, MODE_PERFORMANCE);
+}
+
+static int auto_mode_test_init(struct kunit *test)
+{
+    mock_dev = kunit_kzalloc(test, sizeof(*mock_dev), GFP_KERNEL);
+    if (!mock_dev)
+        return -ENOMEM;
+
+    mock_dev->dev = &mock_dev->dev; // Minimal initialization
+    return 0;
+}
+
+static struct kunit_case auto_mode_test_cases[] = {
+    KUNIT_CASE(test_auto_mode_transition_same_mode),
+    KUNIT_CASE(test_auto_mode_transition_different_mode),
+    KUNIT_CASE(test_auto_mode_transition_multiple_transitions),
+    {}
+};
+
+static struct kunit_suite auto_mode_test_suite = {
+    .name = "auto_mode_transition",
+    .init = auto_mode_test_init,
+    .test_cases = auto_mode_test_cases,
+};
+
+kunit_test_suite(auto_mode_test_suite);

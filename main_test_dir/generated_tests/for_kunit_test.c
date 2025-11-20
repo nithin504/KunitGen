@@ -1,172 +1,112 @@
-// SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
-#include <linux/string.h>
-#include <linux/pinctrl/pinctrl.h>
 
-// Mock structures and functions
-struct pin_desc {
-	const char *mux_owner;
+#define AUTO_MODE_MAX 10
+#define FAN_INDEX_AUTO 0xFF
+
+struct fan_control {
+	int fan_id;
+	bool manual;
 };
 
-struct pinctrl_device {
-	// Minimal mock
+struct mode_config {
+	struct fan_control fan_control;
 };
 
-struct pin_group {
-	const char *name;
-	unsigned int *pins;
-	unsigned int npins;
+struct config_store {
+	struct mode_config mode_set[AUTO_MODE_MAX];
 };
 
-struct gpio_device {
-	struct pinctrl_device *pctrl;
-	struct pin_group *groups;
-	unsigned int ngroups;
-};
+static struct config_store config_store;
 
-// Function pointer for pin_desc_get
-static struct pin_desc *(*mock_pin_desc_get)(struct pinctrl_device *, unsigned int);
-struct pin_desc *pin_desc_get(struct pinctrl_device *pctrl, unsigned int pin)
+static void test_fan_control_manual_flag(struct kunit *test)
 {
-	if (mock_pin_desc_get)
-		return mock_pin_desc_get(pctrl, pin);
-	return NULL;
-}
+	int i;
 
-// Inline the provided code snippet as a function
-static void assign_mux_owner_for_imx_f_groups(struct gpio_device *gpio_dev, unsigned int group)
-{
-	unsigned int ind;
-	struct pin_desc *pd;
+	/* Initialize all entries with default values */
+	for (i = 0; i < AUTO_MODE_MAX; i++) {
+		config_store.mode_set[i].fan_control.fan_id = i;
+		config_store.mode_set[i].fan_control.manual = false;
+	}
 
-	for (ind = 0; ind < gpio_dev->groups[group].npins; ind++) {
-		if (strncmp(gpio_dev->groups[group].name, "IMX_F", strlen("IMX_F")))
-			continue;
+	/* Set one entry to FAN_INDEX_AUTO */
+	config_store.mode_set[5].fan_control.fan_id = FAN_INDEX_AUTO;
 
-		pd = pin_desc_get(gpio_dev->pctrl, gpio_dev->groups[group].pins[ind]);
-		if (pd)
-			pd->mux_owner = gpio_dev->groups[group].name;
+	/* Run the code under test */
+	for (i = 0 ; i < AUTO_MODE_MAX ; i++) {
+		if (config_store.mode_set[i].fan_control.fan_id == FAN_INDEX_AUTO)
+			config_store.mode_set[i].fan_control.manual = false;
+		else
+			config_store.mode_set[i].fan_control.manual = true;
+	}
+
+	/* Verify results */
+	for (i = 0; i < AUTO_MODE_MAX; i++) {
+		if (i == 5) {
+			KUNIT_EXPECT_FALSE(test, config_store.mode_set[i].fan_control.manual);
+		} else {
+			KUNIT_EXPECT_TRUE(test, config_store.mode_set[i].fan_control.manual);
+		}
 	}
 }
 
-// --- Test Cases ---
-
-static struct pin_desc test_pin_desc;
-static int mock_pin_desc_get_call_count;
-
-static struct pin_desc *test_pin_desc_get(struct pinctrl_device *pctrl, unsigned int pin)
+static void test_fan_control_all_auto(struct kunit *test)
 {
-	mock_pin_desc_get_call_count++;
-	return &test_pin_desc;
+	int i;
+
+	/* Initialize all entries to FAN_INDEX_AUTO */
+	for (i = 0; i < AUTO_MODE_MAX; i++) {
+		config_store.mode_set[i].fan_control.fan_id = FAN_INDEX_AUTO;
+		config_store.mode_set[i].fan_control.manual = true;
+	}
+
+	/* Run the code under test */
+	for (i = 0 ; i < AUTO_MODE_MAX ; i++) {
+		if (config_store.mode_set[i].fan_control.fan_id == FAN_INDEX_AUTO)
+			config_store.mode_set[i].fan_control.manual = false;
+		else
+			config_store.mode_set[i].fan_control.manual = true;
+	}
+
+	/* Verify all are set to auto (manual = false) */
+	for (i = 0; i < AUTO_MODE_MAX; i++) {
+		KUNIT_EXPECT_FALSE(test, config_store.mode_set[i].fan_control.manual);
+	}
 }
 
-static void test_assign_mux_owner_group_matches_imx_f(struct kunit *test)
+static void test_fan_control_none_auto(struct kunit *test)
 {
-	struct gpio_device gpio_dev;
-	struct pin_group group;
-	unsigned int pins[] = { 10, 20 };
-	const char *group_name = "IMX_FOO";
+	int i;
 
-	group.name = group_name;
-	group.pins = pins;
-	group.npins = ARRAY_SIZE(pins);
+	/* Initialize all entries to non-AUTO values */
+	for (i = 0; i < AUTO_MODE_MAX; i++) {
+		config_store.mode_set[i].fan_control.fan_id = i;
+		config_store.mode_set[i].fan_control.manual = false;
+	}
 
-	gpio_dev.groups = &group;
-	gpio_dev.ngroups = 1;
-	gpio_dev.pctrl = NULL; // Not used in mock
+	/* Run the code under test */
+	for (i = 0 ; i < AUTO_MODE_MAX ; i++) {
+		if (config_store.mode_set[i].fan_control.fan_id == FAN_INDEX_AUTO)
+			config_store.mode_set[i].fan_control.manual = false;
+		else
+			config_store.mode_set[i].fan_control.manual = true;
+	}
 
-	mock_pin_desc_get = test_pin_desc_get;
-	mock_pin_desc_get_call_count = 0;
-	test_pin_desc.mux_owner = NULL;
-
-	assign_mux_owner_for_imx_f_groups(&gpio_dev, 0);
-
-	KUNIT_EXPECT_EQ(test, mock_pin_desc_get_call_count, 2);
-	KUNIT_EXPECT_PTR_EQ(test, (void *)test_pin_desc.mux_owner, (void *)group_name);
+	/* Verify all are set to manual (manual = true) */
+	for (i = 0; i < AUTO_MODE_MAX; i++) {
+		KUNIT_EXPECT_TRUE(test, config_store.mode_set[i].fan_control.manual);
+	}
 }
 
-static void test_assign_mux_owner_group_does_not_match(struct kunit *test)
-{
-	struct gpio_device gpio_dev;
-	struct pin_group group;
-	unsigned int pins[] = { 10, 20 };
-	const char *group_name = "GPIO_GROUP";
-
-	group.name = group_name;
-	group.pins = pins;
-	group.npins = ARRAY_SIZE(pins);
-
-	gpio_dev.groups = &group;
-	gpio_dev.ngroups = 1;
-	gpio_dev.pctrl = NULL;
-
-	mock_pin_desc_get = test_pin_desc_get;
-	mock_pin_desc_get_call_count = 0;
-	test_pin_desc.mux_owner = NULL;
-
-	assign_mux_owner_for_imx_f_groups(&gpio_dev, 0);
-
-	KUNIT_EXPECT_EQ(test, mock_pin_desc_get_call_count, 0);
-	KUNIT_EXPECT_NULL(test, (void *)test_pin_desc.mux_owner);
-}
-
-static void test_assign_mux_owner_empty_group(struct kunit *test)
-{
-	struct gpio_device gpio_dev;
-	struct pin_group group;
-	const char *group_name = "IMX_FOO";
-
-	group.name = group_name;
-	group.pins = NULL;
-	group.npins = 0;
-
-	gpio_dev.groups = &group;
-	gpio_dev.ngroups = 1;
-	gpio_dev.pctrl = NULL;
-
-	mock_pin_desc_get = test_pin_desc_get;
-	mock_pin_desc_get_call_count = 0;
-
-	assign_mux_owner_for_imx_f_groups(&gpio_dev, 0);
-
-	KUNIT_EXPECT_EQ(test, mock_pin_desc_get_call_count, 0);
-}
-
-static void test_assign_mux_owner_null_pin_desc(struct kunit *test)
-{
-	struct gpio_device gpio_dev;
-	struct pin_group group;
-	unsigned int pins[] = { 10 };
-
-	group.name = "IMX_FOO";
-	group.pins = pins;
-	group.npins = ARRAY_SIZE(pins);
-
-	gpio_dev.groups = &group;
-	gpio_dev.ngroups = 1;
-	gpio_dev.pctrl = NULL;
-
-	// Simulate pin_desc_get returning NULL
-	mock_pin_desc_get = NULL;
-	test_pin_desc.mux_owner = NULL;
-
-	assign_mux_owner_for_imx_f_groups(&gpio_dev, 0);
-
-	// Should not crash and mux_owner should remain unchanged
-	KUNIT_EXPECT_NULL(test, (void *)test_pin_desc.mux_owner);
-}
-
-static struct kunit_case generated_test_cases[] = {
-	KUNIT_CASE(test_assign_mux_owner_group_matches_imx_f),
-	KUNIT_CASE(test_assign_mux_owner_group_does_not_match),
-	KUNIT_CASE(test_assign_mux_owner_empty_group),
-	KUNIT_CASE(test_assign_mux_owner_null_pin_desc),
+static struct kunit_case fan_control_test_cases[] = {
+	KUNIT_CASE(test_fan_control_manual_flag),
+	KUNIT_CASE(test_fan_control_all_auto),
+	KUNIT_CASE(test_fan_control_none_auto),
 	{}
 };
 
-static struct kunit_suite generated_test_suite = {
-	.name = "generated-kunit-test",
-	.test_cases = generated_test_cases,
+static struct kunit_suite fan_control_test_suite = {
+	.name = "fan_control_manual_flag_test",
+	.test_cases = fan_control_test_cases,
 };
 
-kunit_test_suite(generated_test_suite);
+kunit_test_suite(fan_control_test_suite);

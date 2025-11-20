@@ -1,146 +1,106 @@
 #include <kunit/test.h>
-#include <linux/io.h>
 #include <linux/gpio/driver.h>
-#include "gpio-amdpt.c"
+#include <linux/io.h>
+#include <linux/spinlock.h>
 
-#define MOCK_BASE_ADDR 0x1000
-#define INTERNAL_GPIO0_DEBOUNCE 0x2
-#define DB_TYPE_REMOVE_GLITCH 0x1
-#define DB_CNTRL_OFF 28
-#define DB_TMR_OUT_MASK 0xFF
-#define DB_TMR_LARGE_OFF 9
-#define DB_CNTRL_MASK 0x7
+// Mock structure to simulate pt_gpio_chip
+struct pt_gpio_chip {
+	void __iomem *reg_base;
+};
 
-// Mock register offsets (these would normally come from pinctrl-amd.h)
-#define WAKE_INT_MASTER_REG 0x100
+#define PT_SYNC_REG 0x0
+#define TEST_PIN_OFFSET 5
+#define MMIO_BUF_SIZE 4096
 
-// Forward declarations for functions we're testing
-static int amd_gpio_set_debounce(struct amd_gpio *gpio, unsigned int pin, unsigned int debounce);
+static struct pt_gpio_chip test_pt_gpio;
+static char mmio_buffer[MMIO_BUF_SIZE];
 
-static struct amd_gpio *create_mock_gpio_dev(struct kunit *test)
+// Helper function to initialize the mock chip
+static void setup_mock_pt_gpio(struct kunit *test)
 {
-	struct amd_gpio *gpio_dev = kunit_kzalloc(test, sizeof(*gpio_dev), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev);
-	
-	gpio_dev->base = kunit_kzalloc(test, 8192, GFP_KERNEL);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, gpio_dev->base);
-	
-	return gpio_dev;
+	test_pt_gpio.reg_base = (void __iomem *)mmio_buffer;
+	memset(mmio_buffer, 0, MMIO_BUF_SIZE);
 }
 
-static void test_amd_gpio_set_debounce_less_than_61(struct kunit *test)
+// Test freeing a pin clears the correct bit
+static void test_pt_gpio_free_clears_bit(struct kunit *test)
 {
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	int ret;
+	struct gpio_chip gc = { .bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(gc.bgpio_lock) };
+	u32 reg_val_before, reg_val_after;
 
-	// Clear WAKE_INT_MASTER_REG to avoid INTERNAL_GPIO0_DEBOUNCE
-	*((u32 *)(gpio_dev->base + WAKE_INT_MASTER_REG)) = 0;
+	setup_mock_pt_gpio(test);
+	gc.parent = NULL; // Not used in this test
+	
+	// Set up initial register state with the pin bit set
+	writel(BIT(TEST_PIN_OFFSET), test_pt_gpio.reg_base + PT_SYNC_REG);
 
-	// Set debounce < 61 to hit the first range
-	ret = amd_gpio_set_debounce(gpio_dev, 1, 50);
+	reg_val_before = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
+	KUNIT_EXPECT_NE(test, reg_val_before & BIT(TEST_PIN_OFFSET), 0U);
 
-	KUNIT_EXPECT_EQ(test, ret, 0);
+	// Call the function under test
+	pt_gpio_free(&gc, TEST_PIN_OFFSET);
+
+	reg_val_after = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
+	KUNIT_EXPECT_EQ(test, reg_val_after & BIT(TEST_PIN_OFFSET), 0U);
 }
 
-static void test_amd_gpio_set_debounce_zero_offset(struct kunit *test)
+// Test freeing multiple pins maintains other bits
+static void test_pt_gpio_free_preserves_other_bits(struct kunit *test)
 {
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	u32 val = INTERNAL_GPIO0_DEBOUNCE;
-	u32 *reg = (u32 *)(gpio_dev->base + WAKE_INT_MASTER_REG);
-	int ret;
-	
-	*reg = val;
-	
-	// Test with GPIO offset 0 and non-zero debounce
-	ret = amd_gpio_set_debounce(gpio_dev, 0, 1000);
-	KUNIT_EXPECT_EQ(test, ret, 0);
+	struct gpio_chip gc = { .bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(gc.bgpio_lock) };
+	u32 reg_val_before, reg_val_after;
+	const u32 initial_pins = BIT(1) | BIT(3) | BIT(TEST_PIN_OFFSET) | BIT(7);
+
+	setup_mock_pt_gpio(test);
+	gc.parent = NULL;
+
+	// Set up initial register state with several pins set
+	writel(initial_pins, test_pt_gpio.reg_base + PT_SYNC_REG);
+
+	reg_val_before = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
+	KUNIT_EXPECT_EQ(test, reg_val_before, initial_pins);
+
+	// Free only one pin
+	pt_gpio_free(&gc, TEST_PIN_OFFSET);
+
+	reg_val_after = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
+	// Check that our target pin is cleared but others remain
+	KUNIT_EXPECT_EQ(test, reg_val_after & BIT(TEST_PIN_OFFSET), 0U);
+	KUNIT_EXPECT_EQ(test, reg_val_after & (BIT(1) | BIT(3) | BIT(7)), 
+				    initial_pins & (BIT(1) | BIT(3) | BIT(7)));
 }
 
-static void test_amd_gpio_set_debounce_valid_range(struct kunit *test)
+// Test freeing already cleared pin has no effect
+static void test_pt_gpio_free_already_cleared(struct kunit *test)
 {
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	int ret;
-	
-	ret = amd_gpio_set_debounce(gpio_dev, 1, 2000); // falls in 3rd range
-	KUNIT_EXPECT_EQ(test, ret, 0);
+	struct gpio_chip gc = { .bgpio_lock = __RAW_SPIN_LOCK_UNLOCKED(gc.bgpio_lock) };
+	u32 reg_val_before, reg_val_after;
+
+	setup_mock_pt_gpio(test);
+	gc.parent = NULL;
+
+	// Ensure register starts with the pin bit clear
+	writel(0, test_pt_gpio.reg_base + PT_SYNC_REG);
+
+	reg_val_before = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
+	KUNIT_EXPECT_EQ(test, reg_val_before & BIT(TEST_PIN_OFFSET), 0U);
+
+	pt_gpio_free(&gc, TEST_PIN_OFFSET);
+
+	reg_val_after = readl(test_pt_gpio.reg_base + PT_SYNC_REG);
+	KUNIT_EXPECT_EQ(test, reg_val_after, 0U);
 }
 
-static void test_amd_gpio_set_debounce_max_range(struct kunit *test)
-{
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	int ret;
-	
-	ret = amd_gpio_set_debounce(gpio_dev, 2, 300000); // falls in 5th range
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static void test_amd_gpio_set_debounce_invalid_range(struct kunit *test)
-{
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	int ret;
-	
-	ret = amd_gpio_set_debounce(gpio_dev, 3, 2000000); // exceeds max
-	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
-}
-
-static void test_amd_gpio_set_debounce_zero_debounce(struct kunit *test)
-{
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	int ret;
-	
-	ret = amd_gpio_set_debounce(gpio_dev, 4, 0); // disables debounce
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static void test_amd_gpio_set_debounce_second_range(struct kunit *test)
-{
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	int ret;
-	
-	ret = amd_gpio_set_debounce(gpio_dev, 5, 100); // hits 2nd range
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static void test_amd_gpio_set_debounce_fourth_range(struct kunit *test)
-{
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	int ret;
-	
-	ret = amd_gpio_set_debounce(gpio_dev, 6, 10000); // hits 4th range
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static void test_amd_gpio_set_debounce_internal_gpio0_debounce(struct kunit *test)
-{
-	struct amd_gpio *gpio_dev = create_mock_gpio_dev(test);
-	int ret;
-	
-	// Set WAKE_INT_MASTER_REG to include INTERNAL_GPIO0_DEBOUNCE
-	*((u32 *)(gpio_dev->base + WAKE_INT_MASTER_REG)) = INTERNAL_GPIO0_DEBOUNCE;
-	
-	// Provide a non-zero debounce value, which should be overridden to 0
-	ret = amd_gpio_set_debounce(gpio_dev, 0, 100);
-	
-	// Expect success
-	KUNIT_EXPECT_EQ(test, ret, 0);
-}
-
-static struct kunit_case gpio_debounce_test_cases[] = {
-	KUNIT_CASE(test_amd_gpio_set_debounce_less_than_61),
-	KUNIT_CASE(test_amd_gpio_set_debounce_zero_offset),
-	KUNIT_CASE(test_amd_gpio_set_debounce_valid_range),
-	KUNIT_CASE(test_amd_gpio_set_debounce_max_range),
-	KUNIT_CASE(test_amd_gpio_set_debounce_invalid_range),
-	KUNIT_CASE(test_amd_gpio_set_debounce_zero_debounce),
-	KUNIT_CASE(test_amd_gpio_set_debounce_second_range),
-	KUNIT_CASE(test_amd_gpio_set_debounce_fourth_range),
-	KUNIT_CASE(test_amd_gpio_set_debounce_internal_gpio0_debounce),
+static struct kunit_case pt_gpio_free_test_cases[] = {
+	KUNIT_CASE(test_pt_gpio_free_clears_bit),
+	KUNIT_CASE(test_pt_gpio_free_preserves_other_bits),
+	KUNIT_CASE(test_pt_gpio_free_already_cleared),
 	{}
 };
 
-static struct kunit_suite gpio_debounce_test_suite = {
-	.name = "gpio_debounce_test",
-	.test_cases = gpio_debounce_test_cases,
+static struct kunit_suite pt_gpio_free_test_suite = {
+	.name = "pt_gpio_free",
+	.test_cases = pt_gpio_free_test_cases,
 };
 
-kunit_test_suite(gpio_debounce_test_suite);
+kunit_test_suite(pt_gpio_free_test_suite);

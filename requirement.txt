@@ -6,3 +6,5 @@ transformers
 langchain_huggingface
 openai
 google.generativeai
+faiss-cpu
+
