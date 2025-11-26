@@ -119,7 +119,7 @@ class KUnitTestGenerator:
 
 # ---------------- Kernel Build Integration ----------------
     def _update_makefile(self, test_name: str):
-        makefile_path = Path("/home/amd/linux/drivers/platform/x86/amd/pmf/Makefile")
+        makefile_path = Path("/home/amd/linux/drivers/gpio/Makefile")
         if not makefile_path.exists():
             print(f"⚠️  No Makefile found at '{makefile_path}' — skipping Makefile update.")
             return
@@ -154,7 +154,7 @@ class KUnitTestGenerator:
         Ensures the main kernel Kconfig sources the custom test Kconfig file,
         and adds the specific config entry for the given test to that file.
         """
-        main_kconfig_path = Path("/home/amd/linux/drivers/platform/x86/amd/pmf/Kconfig")
+        main_kconfig_path = Path("/home/amd/linux/drivers/gpio/Kconfig")
         backup_path = main_kconfig_path.with_suffix(".KunitGen_backup")
         config_name = test_name.upper()
     
@@ -196,7 +196,7 @@ class KUnitTestGenerator:
 
         return True
     def _update_test_config(self, test_name: str):
-        cfg_path = Path("/home/amd/linux/my_pmf.config")
+        cfg_path = Path("/home/amd/linux/my_gpio.config")
         if not cfg_path.exists():
             print(f"⚠️  No my_pinctrl.config found at '{cfg_path}' — skipping.")
             return
@@ -330,5 +330,3 @@ Rules:
 
 
 
-if __name__ == "__main__":
-    run()

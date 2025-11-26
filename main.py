@@ -44,7 +44,7 @@ def main():
     except Exception as e:
         print(f"❌ Error during function extraction: {e}")
         return 
-    # --- Step 3: Generate KUnit tests ---"""
+    # --- Step 3: Generate KUnit tests ---
     try:
         generator = KUnitTestGenerator(
             main_test_dir=main_test_dir,

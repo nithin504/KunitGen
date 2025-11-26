@@ -101,7 +101,7 @@ def load_context_files():
         "sample_code1": safe_read(ref_dir / "kunit_test1.c"),
         "sample_code2": safe_read(ref_dir / "kunit_test2.c"),
         "sample_code3": safe_read(ref_dir / "kunit_test3.c"),
-    }
+        "compile_errors": safe_read(BASE_DIR / "compilation_log" / "compile_error.txt")}
 
 # --------------------- Test Generation ---------------------
 def generate_test_for_function(func_file: Path):
@@ -125,10 +125,8 @@ You are a senior Linux kernel developer generating KUnit tests.
 
 ## Retrieved Similar Code
 {retrieved_text}
-
-## Reference Code
-{ctx["sample_code2"]}
-
+## Compilation eror
+{ctx["compile_errors"]}
 Rules:
 - Include required headers correctly
 - Use kunit_kzalloc for allocations
@@ -136,6 +134,7 @@ Rules:
 - Do not mock target functions
 - Output should be a compilable KUnit test C file
 - Do not include explanations, only C code
+- add ``` include "gpio-amdpt.c" ```c
 """
         generated = query_model(prompt)
 
