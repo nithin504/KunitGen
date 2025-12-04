@@ -278,41 +278,65 @@ class KUnitTestGenerator:
         func_code = func_file_path.read_text(encoding="utf-8")
         test_name = f"{func_file_path.stem}_kunit_test"
         out_file = self.output_dir / f"{test_name}.c"
+    
+        # Initial RAG context
         context = self._load_context_files()
         retrieved_snippets = self._retrieve_context(func_code)
         retrieved_text = "\n\n".join(retrieved_snippets)
-
+    
         for attempt in range(1, self.max_retries + 1):
             print(f"\n🔹 Generating test for {func_file_path.name} (Attempt {attempt}/{self.max_retries})...")
+    
+            # Load current error logs each retry (may be empty on first run)
+            error_logs = self.error_log_file.read_text(encoding="utf-8") if self.error_log_file.exists() else "// No previous errors"
+    
             prompt = f"""
-You are an expert Linux kernel developer generating KUnit tests.
-
-## Function to test
-{func_code}
-
-## Retrieved Similar Code
-{retrieved_text}
-
-## Reference Code
-{context['sample_code2']}
-
-## Previous Compilation Errors
-{context['error_logs']}
-
-Rules:
-- Include required headers correctly
-- Use kunit_kzalloc for allocations
-- Use KUNIT_EXPECT_* macros
-- Do not mock target functions
-- Output should be a compilable KUnit test C file
-- Do not include explanations, only C code
-"""
+    You are an expert Linux kernel developer generating KUnit tests.
+    
+    ## Function to test
+    {func_code}
+    
+    ## Retrieved Similar Code
+    {retrieved_text}
+    
+    ## Reference Code
+    {context['sample_code2']}
+    
+    ## Previous Compilation Errors
+    {error_logs}
+    
+    Rules:
+    - Include required headers correctly
+    - Use kunit_kzalloc for allocations
+    - Use KUNIT_EXPECT_* macros
+    - Do not mock target functions
+    - Output must be a compilable KUnit test C file
+    - Do not include explanations, only C code
+    """
+    
+            # Generate updated test file
             generated_test = self._query_model(prompt)
             out_file.write_text(generated_test, encoding="utf-8")
             print(f"✅ Generated test file: {out_file}")
-            # Compilation feedback loop remains unchanged
-            break
-        
+    
+            # Update Makefile/Kconfig
+            self._update_makefile(test_name)
+            self._update_kconfig(test_name)
+            self._update_test_config(test_name)
+    
+            # Compile & evaluate
+            print("⚙️  Running compile check...")
+            success = self._compile_and_check()
+    
+            if success:
+                print(f"🎉 Test for {func_file_path.name} compiled successfully on attempt {attempt}.")
+                return
+            
+            print(f"❌ Compilation failed on attempt {attempt}. Regenerating with error logs...")
+    
+        print(f"\n❌ Failed to generate a compilable test for {func_file_path.name} after {self.max_retries} attempts.")
+    
+            
     def run(self):
         print(f"--- Starting KUnit Test Generation in '{self.base_dir}' ---")
         self.output_dir.mkdir(parents=True, exist_ok=True)
