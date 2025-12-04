@@ -26,6 +26,12 @@ class KUnitTestGenerator:
         ]
         self.error_log_file = self.base_dir / "compilation_log" / "compile_error.txt"
 
+        #Makefile paths
+        self.makefile_path = Path(makefile_path) if makefile_path else None
+        self.kconfig_path = Path(kconfig_path) if kconfig_path else None
+        self.config_file = Path(config_file) if config_file else None
+
+
         # Model settings
         self.model_name = model_name
         self.temperature = temperature
@@ -119,7 +125,7 @@ class KUnitTestGenerator:
 
 # ---------------- Kernel Build Integration ----------------
     def _update_makefile(self, test_name: str):
-        makefile_path = Path("/home/amd/linux/drivers/gpio/Makefile")
+        makefile_path = self.makefile_path
         if not makefile_path.exists():
             print(f"⚠️  No Makefile found at '{makefile_path}' — skipping Makefile update.")
             return
@@ -154,7 +160,7 @@ class KUnitTestGenerator:
         Ensures the main kernel Kconfig sources the custom test Kconfig file,
         and adds the specific config entry for the given test to that file.
         """
-        main_kconfig_path = Path("/home/amd/linux/drivers/gpio/Kconfig")
+        main_kconfig_path = self.kconfig_path 
         backup_path = main_kconfig_path.with_suffix(".KunitGen_backup")
         config_name = test_name.upper()
     
@@ -196,7 +202,7 @@ class KUnitTestGenerator:
 
         return True
     def _update_test_config(self, test_name: str):
-        cfg_path = Path("/home/amd/linux/my_gpio.config")
+        cfg_path =  self.config_file
         if not cfg_path.exists():
             print(f"⚠️  No my_pinctrl.config found at '{cfg_path}' — skipping.")
             return
@@ -279,16 +285,22 @@ class KUnitTestGenerator:
         test_name = f"{func_file_path.stem}_kunit_test"
         out_file = self.output_dir / f"{test_name}.c"
     
-        # Initial RAG context
+        # Initial RAG-only context
         context = self._load_context_files()
         retrieved_snippets = self._retrieve_context(func_code)
         retrieved_text = "\n\n".join(retrieved_snippets)
     
+        previous_generated_code = "// No previous generated test yet"
+    
         for attempt in range(1, self.max_retries + 1):
             print(f"\n🔹 Generating test for {func_file_path.name} (Attempt {attempt}/{self.max_retries})...")
     
-            # Load current error logs each retry (may be empty on first run)
-            error_logs = self.error_log_file.read_text(encoding="utf-8") if self.error_log_file.exists() else "// No previous errors"
+            # Load error logs (empty on first attempt)
+            error_logs = (
+                self.error_log_file.read_text(encoding="utf-8")
+                if self.error_log_file.exists()
+                else "// No previous errors"
+            )
     
             prompt = f"""
     You are an expert Linux kernel developer generating KUnit tests.
@@ -299,42 +311,45 @@ class KUnitTestGenerator:
     ## Retrieved Similar Code
     {retrieved_text}
     
-    ## Reference Code
-    {context['sample_code2']}
+    ## Previous Generated Test (for fixing failures)
+    {previous_generated_code}
     
     ## Previous Compilation Errors
     {error_logs}
     
     Rules:
-    - Include required headers correctly
+    - Fix all compilation errors
+    - Include correct kernel headers
     - Use kunit_kzalloc for allocations
     - Use KUNIT_EXPECT_* macros
-    - Do not mock target functions
-    - Output must be a compilable KUnit test C file
-    - Do not include explanations, only C code
+    - Do not mock or modify the function under test
+    - Output ONLY a valid compilable KUnit C file
     """
     
-            # Generate updated test file
+            # Generate new / corrected testcase
             generated_test = self._query_model(prompt)
             out_file.write_text(generated_test, encoding="utf-8")
             print(f"✅ Generated test file: {out_file}")
     
-            # Update Makefile/Kconfig
+            # Update makefiles
             self._update_makefile(test_name)
             self._update_kconfig(test_name)
             self._update_test_config(test_name)
     
-            # Compile & evaluate
+            # Try compiling
             print("⚙️  Running compile check...")
             success = self._compile_and_check()
     
             if success:
                 print(f"🎉 Test for {func_file_path.name} compiled successfully on attempt {attempt}.")
                 return
-            
-            print(f"❌ Compilation failed on attempt {attempt}. Regenerating with error logs...")
+    
+            # Save current generated version for the next retry
+            previous_generated_code = generated_test
+            print(f"❌ Compilation failed. Regenerating with updated error logs + previous test...")
     
         print(f"\n❌ Failed to generate a compilable test for {func_file_path.name} after {self.max_retries} attempts.")
+
     
             
     def run(self):
