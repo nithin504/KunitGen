@@ -1,166 +1,190 @@
 import os
 import re
-import faiss
 from pathlib import Path
 from dotenv import load_dotenv
+
+import chromadb
+from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
-# --------------------- Configuration ---------------------
-BASE_DIR = Path("/home/amd/nithin/KunitGen/main_test_dir")  # ✅ Fixed missing quote
-MODEL_NAME = "qwen/qwen3-coder-480b-a35b-instruct"
-TEMPERATURE = 0.4
-MAX_TOKENS = 8192
-MAX_RETRIES = 3
 
-VECTOR_INDEX = BASE_DIR / "code_index.faiss"
-VECTOR_MAP = BASE_DIR / "file_map.txt"
+class KUnitTestGenerator:
+    """Generate KUnit tests using RAG + ChromaDB + LLM"""
 
-# --------------------- Environment ------------------------
-load_dotenv()
-API_KEY = os.environ.get("NVIDIA_API_KEY")
-if not API_KEY:
-    raise ValueError("NVIDIA_API_KEY environment variable not set.")
+    def __init__(
+        self,
+        main_test_dir: Path,
+        model_name: str,
+        temperature: float = 0.2,
+        max_retries: int = 3,
+    ):
+        if not main_test_dir.is_dir():
+            raise FileNotFoundError(main_test_dir)
 
-client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=API_KEY)
+        # ---------------- Paths ----------------
+        self.base_dir = main_test_dir
+        self.reference_dir = self.base_dir / "reference_testcases"
+        self.output_dir = self.base_dir / "generated_tests"
+        self.logs_dir = self.base_dir / "compilation_log"
+        self.chroma_dir = self.base_dir / "chroma_db"
 
-# --------------------- Embedding + Index Setup ---------------
-def build_faiss_index():
-    """Build FAISS index from available .c files if missing."""
-    code_dir = BASE_DIR / "reference_testcases"
-    files = list(code_dir.rglob("*.c"))
-    if not files:
-        print(f"⚠️ No .c files found under {code_dir}")
-        return None, []
-    print(f"📦 Building FAISS index from {len(files)} C source files...")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    texts = [f.read_text(errors="ignore") for f in files]
-    embeddings = model.encode(texts, show_progress_bar=True)
-    dim = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dim)
-    index.add(embeddings)
-    faiss.write_index(index, str(VECTOR_INDEX))
-    VECTOR_MAP.write_text("\n".join(str(p) for p in files))
-    print(f"✅ Saved index: {VECTOR_INDEX}")
-    print(f"✅ Saved map: {VECTOR_MAP}")
-    return index, [str(p) for p in files]
+        self.output_dir.mkdir(exist_ok=True)
+        self.logs_dir.mkdir(exist_ok=True)
+        self.chroma_dir.mkdir(exist_ok=True)
 
-# --------------------- Load or Build Index -------------------
-print("🔍 Loading embedding model and FAISS index...")
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+        # ---------------- LLM ----------------
+        self.model_name = model_name
+        self.temperature = temperature
+        self.max_tokens = 8192
+        self.max_retries = max_retries
 
-if not VECTOR_INDEX.exists() or not VECTOR_MAP.exists():
-    index, file_map = build_faiss_index()
-else:
-    index = faiss.read_index(str(VECTOR_INDEX))
-    file_map = VECTOR_MAP.read_text().splitlines()
-    print(f"✅ Loaded FAISS index from {VECTOR_INDEX}")
-
-# --------------------- Retrieval -----------------------------
-def retrieve_context(query_text: str, top_k: int = 3):
-    """Retrieve top-k relevant code snippets."""
-    if index is None:
-        return ["// Retrieval skipped (no FAISS index available)"]
-    query_emb = embed_model.encode([query_text])
-    distances, indices = index.search(query_emb, top_k)
-    results = []
-    for idx in indices[0]:
-        if idx < len(file_map):
-            p = Path(file_map[idx])
-            if p.exists():
-                text = p.read_text(errors="ignore")
-                results.append(f"// From {p}\n{text[:1500]}")
-    return results
-
-# --------------------- Model Query -------------------------
-def query_model(prompt: str):
-    try:
-        completion = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
+        load_dotenv()
+        self.client = OpenAI(
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key=os.environ["NVIDIA_API_KEY"]
         )
-        return (
-            completion.choices[0]
-            .message.content.replace("```c", "")
-            .replace("```", "")
-            .strip()
+
+        # ---------------- Embeddings ----------------
+        self.embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+        # ---------------- ChromaDB ----------------
+        self.chroma = chromadb.Client(
+            Settings(
+                persist_directory=str(self.chroma_dir),
+                anonymized_telemetry=False
+            )
         )
-    except Exception as e:
-        return f"// Error: {e}"
 
-# --------------------- File Helpers ------------------------
-def safe_read(p: Path, fallback="// Missing file"):
-    return p.read_text(encoding="utf-8") if p.exists() else fallback
+        self.collection = self.chroma.get_or_create_collection(
+            name="kunit_kernel_functions"
+        )
 
-def load_context_files():
-    print("📂 Loading reference KUnit tests...")
-    ref_dir = BASE_DIR / "reference_testcases"
-    return {
-        "sample_code1": safe_read(ref_dir / "kunit_test1.c"),
-        "sample_code2": safe_read(ref_dir / "kunit_test2.c"),
-        "sample_code3": safe_read(ref_dir / "kunit_test3.c"),
-        "compile_errors": safe_read(BASE_DIR / "compilation_log" / "compile_error.txt")}
+        if self.collection.count() == 0:
+            self._build_index()
 
-# --------------------- Test Generation ---------------------
-def generate_test_for_function(func_file: Path):
-    func_code = func_file.read_text()
-    test_name = f"{func_file.stem}_kunit_test"
-    out_dir = BASE_DIR / "generated_tests"
-    out_dir.mkdir(parents=True, exist_ok=True)  # ✅ Ensure directory exists
-    out_file = out_dir / f"{test_name}.c"
+    # =====================================================================
+    # FUNCTION EXTRACTION (STRUCTURAL CHUNKING)
+    # =====================================================================
 
-    ctx = load_context_files()
-    retrieved = retrieve_context(func_code, top_k=3)
-    retrieved_text = "\n\n".join(retrieved)
+    def _extract_functions(self, code: str):
+        pattern = re.compile(
+            r"(static\s+)?[\w\*\s]+\s+(\w+)\s*\([^)]*\)\s*\{",
+            re.MULTILINE
+        )
 
-    for attempt in range(1, MAX_RETRIES + 1):
-        print(f"\n🔹 Attempt {attempt}/{MAX_RETRIES} for {func_file.name}")
+        functions = []
+        matches = list(pattern.finditer(code))
+
+        for i, match in enumerate(matches):
+            start = match.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(code)
+            fn_body = code[start:end]
+
+            functions.append({
+                "name": match.group(2),
+                "code": fn_body.strip()
+            })
+
+        return functions
+
+    # =====================================================================
+    # BUILD CHROMADB INDEX (ONCE)
+    # =====================================================================
+
+    def _build_index(self):
+        print("📦 Building ChromaDB index (function-level kernel code)...")
+
+        documents, metadatas, ids = [], [], []
+
+        for file in self.reference_dir.rglob("*.c"):
+            code = file.read_text(errors="ignore")
+            functions = self._extract_functions(code)
+
+            for idx, fn in enumerate(functions):
+                documents.append(fn["code"])
+                metadatas.append({
+                    "function": fn["name"],
+                    "file": str(file),
+                    "subsystem": file.parent.name
+                })
+                ids.append(f"{file.stem}_{fn['name']}_{idx}")
+
+        if not documents:
+            raise RuntimeError("No kernel functions found")
+
+        embeddings = self.embed_model.encode(
+            documents,
+            normalize_embeddings=True,
+            show_progress_bar=True
+        ).tolist()
+
+        self.collection.add(
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            ids=ids
+        )
+
+        self.chroma.persist()
+        print(f"✅ Indexed {len(documents)} kernel functions")
+
+    # =====================================================================
+    # RETRIEVE CONTEXT
+    # =====================================================================
+
+    def retrieve_context(
+        self,
+        query: str,
+        k: int = 5,
+        subsystem: str | None = None
+    ):
+        query_embedding = self.embed_model.encode(
+            query,
+            normalize_embeddings=True
+        ).tolist()
+
+        where = {"subsystem": subsystem} if subsystem else None
+
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=k,
+            where=where
+        )
+
+        return results["documents"][0], results["metadatas"][0]
+
+    # =====================================================================
+    # GENERATE KUNIT TEST (LLM)
+    # =====================================================================
+
+    def generate_kunit_test(self, function_name: str, subsystem: str | None = None):
+        docs, metas = self.retrieve_context(
+            f"Generate KUnit test for {function_name}",
+            subsystem=subsystem
+        )
+
+        context = "\n\n".join(docs)
+
         prompt = f"""
-You are a senior Linux kernel developer generating KUnit tests.
+You are a Linux kernel developer.
 
-## Function to test
-{func_code}
+Write a correct and compilable KUnit test.
+Follow kernel coding style.
+Do not hallucinate APIs.
 
-## Retrieved Similar Code
-{retrieved_text}
-## Compilation eror
-{ctx["compile_errors"]}
-Rules:
-- Include required headers correctly
-- Use kunit_kzalloc for allocations
-- Use KUNIT_EXPECT_* macros
-- Do not mock target functions
-- Output should be a compilable KUnit test C file
-- Do not include explanations, only C code
-- add ``` include "gpio-amdpt.c" ```c
+Target function:
+{function_name}
+
+Relevant kernel context:
+{context}
 """
-        generated = query_model(prompt)
 
-        # ✅ Debug logs
-        print(f"Generated content length: {len(generated)}")
-        print(f"Output path: {out_file.resolve()}")
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=self.temperature,
+            max_tokens=self.max_tokens
+        )
 
-        if len(generated.strip()) == 0 or generated.startswith("// Error"):
-            print(f"⚠️ Generation failed: {generated}")
-            continue
-
-        out_file.write_text(generated)
-        print(f"✅ Generated test file: {out_file}")
-        break
-
-# --------------------- Main Entry ---------------------------
-def main():
-    print(f"--- 🚀 Starting RAG-based KUnit Test Generator in {BASE_DIR} ---")
-    func_dir = BASE_DIR / "test_functions"
-    files = list(func_dir.glob("*.c"))
-    if not files:
-        print(f"❌ No .c files in {func_dir}")
-        return
-    for f in files:
-        generate_test_for_function(f)
-    print("\n--- ✅ All functions processed. ---")
-
-if __name__ == "__main__":
-    main()
+        return response.choices[0].message.content.strip()
