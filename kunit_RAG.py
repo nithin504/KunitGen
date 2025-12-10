@@ -1,3 +1,4 @@
+
 import os
 import re
 from pathlib import Path
@@ -126,7 +127,7 @@ class KUnitTestGenerator:
             ids=ids
         )
 
-        self.chroma.persist()
+        # Removed self.chroma.persist() → persistence is automatic now
         print(f"✅ Indexed {len(documents)} kernel functions")
 
     # =====================================================================
@@ -187,4 +188,3 @@ Relevant kernel context:
             max_tokens=self.max_tokens
         )
 
-        return response.choices[0].message.content.strip()
